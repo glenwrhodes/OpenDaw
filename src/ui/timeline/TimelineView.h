@@ -61,6 +61,7 @@ signals:
 
 public slots:
     void onTracksChanged();
+    void onEditChanged();
     void onTransportPositionChanged();
 
 private:

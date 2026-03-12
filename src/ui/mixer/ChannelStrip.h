@@ -25,7 +25,7 @@ public:
     static ChannelStrip* createMasterStrip(EditManager* editMgr,
                                            QWidget* parent = nullptr);
 
-    QSize sizeHint() const override { return {88, 320}; }
+    QSize sizeHint() const override { return {88, 400}; }
 
     te::AudioTrack* track() const { return track_; }
     void refresh();

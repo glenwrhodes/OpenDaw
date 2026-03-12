@@ -158,6 +158,8 @@ TimelineView::TimelineView(EditManager* editMgr, QWidget* parent)
 
     connect(editMgr_, &EditManager::tracksChanged,
             this, &TimelineView::onTracksChanged);
+    connect(editMgr_, &EditManager::editChanged,
+            this, &TimelineView::onEditChanged);
 
     onTracksChanged();
 }
@@ -186,7 +188,7 @@ void TimelineView::onTransportPositionChanged()
     updatePlayhead();
 }
 
-void TimelineView::onTracksChanged()
+void TimelineView::onEditChanged()
 {
     snapper_.setBpm(editMgr_->getBpm());
     snapper_.setTimeSig(editMgr_->getTimeSigNumerator(),
@@ -194,8 +196,13 @@ void TimelineView::onTracksChanged()
     ruler_->setBpm(editMgr_->getBpm());
     ruler_->setTimeSig(editMgr_->getTimeSigNumerator(),
                        editMgr_->getTimeSigDenominator());
-    rebuildTrackHeaders();
     rebuildClips();
+}
+
+void TimelineView::onTracksChanged()
+{
+    onEditChanged();
+    rebuildTrackHeaders();
 }
 
 void TimelineView::rebuildTrackHeaders()

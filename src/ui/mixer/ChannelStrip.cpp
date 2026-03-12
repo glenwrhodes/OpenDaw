@@ -53,6 +53,7 @@ void ChannelStrip::setupUI()
 {
     auto& theme = ThemeManager::instance().current();
     setFixedWidth(88);
+    setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Expanding);
     setAutoFillBackground(true);
     QPalette pal;
     pal.setColor(QPalette::Window, theme.surface);
@@ -62,7 +63,8 @@ void ChannelStrip::setupUI()
     layout->setContentsMargins(4, 4, 4, 4);
     layout->setSpacing(3);
 
-    // Track name
+    // ── Top section: name, FX slots, pan ──
+
     nameLabel_ = new QLabel(this);
     nameLabel_->setAccessibleName("Track Name");
     if (track_)
@@ -74,7 +76,6 @@ void ChannelStrip::setupUI()
             .arg(theme.text.name(), theme.background.name()));
     layout->addWidget(nameLabel_);
 
-    // FX slots
     fxSlot1_ = new QComboBox(this);
     fxSlot1_->setAccessibleName("Effect Slot 1");
     fxSlot1_->addItem("-- FX 1 --");
@@ -98,16 +99,11 @@ void ChannelStrip::setupUI()
     fxSlot2_->addItem("EQ");
     fxSlot2_->addItem("Compressor");
     fxSlot2_->setFixedHeight(24);
-    fxSlot2_->setStyleSheet(
-        QString("QComboBox { font-size: 9px; background: %1; color: %2; border: 1px solid %3; padding: 2px 4px; }"
-                "QComboBox QAbstractItemView { background: %4; color: %2; selection-background-color: %5; }")
-            .arg(theme.background.name(), theme.text.name(), theme.border.name(),
-                 theme.surface.name(), theme.accent.name()));
+    fxSlot2_->setStyleSheet(fxSlot1_->styleSheet());
     connect(fxSlot2_, qOverload<int>(&QComboBox::currentIndexChanged),
             this, [this](int) { emit effectInsertRequested(track_, 1); });
     layout->addWidget(fxSlot2_);
 
-    // Pan knob
     panKnob_ = new RotaryKnob(this);
     panKnob_->setAccessibleName("Pan");
     panKnob_->setRange(-1.0, 1.0);
@@ -130,16 +126,20 @@ void ChannelStrip::setupUI()
         }
     });
 
-    // Fader + meter side by side
+    // ── Middle section: fader + meter (stretches to fill) ──
+
     auto* faderRow = new QHBoxLayout();
+    faderRow->setSpacing(2);
 
     meter_ = new LevelMeter(this);
     meter_->setAccessibleName("Level Meter");
     meter_->setFixedWidth(14);
+    meter_->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Expanding);
     faderRow->addWidget(meter_);
 
     fader_ = new VolumeFader(this);
     fader_->setAccessibleName("Volume Fader");
+    fader_->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Expanding);
     faderRow->addWidget(fader_);
 
     layout->addLayout(faderRow, 1);
@@ -155,7 +155,8 @@ void ChannelStrip::setupUI()
         }
     });
 
-    // Mute / Solo / Arm buttons
+    // ── Bottom section: M / S / R buttons ──
+
     auto* btnRow = new QHBoxLayout();
     btnRow->setSpacing(2);
 
