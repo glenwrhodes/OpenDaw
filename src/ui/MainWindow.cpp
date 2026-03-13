@@ -1,9 +1,17 @@
 #include "MainWindow.h"
+#include "ui/effects/VstSelectorDialog.h"
+#include "ui/effects/PluginEditorWindow.h"
+#include "ui/pianoroll/PianoRollEditor.h"
 #include "utils/ThemeManager.h"
 #include <QFileDialog>
 #include <QAction>
 #include <QLabel>
 #include <QKeySequence>
+#include <QStyle>
+#include <QSettings>
+#include <QFileInfo>
+#include <QDir>
+#include <QMessageBox>
 
 namespace freedaw {
 
@@ -30,6 +38,9 @@ MainWindow::MainWindow(FreeDawApplication& app, QWidget* parent)
             this, [this](int mode) {
                 timelineView_->snapper().setMode(static_cast<SnapMode>(mode));
             });
+
+    connect(timelineView_, &TimelineView::instrumentSelectRequested,
+            this, &MainWindow::onInstrumentSelectRequested);
 
     createDocks();
     createMenus();
@@ -130,8 +141,25 @@ void MainWindow::createMenus()
     editMenu->addAction("Add Audio &Track", QKeySequence("Ctrl+T"), this,
         &MainWindow::onAddTrack);
 
+    editMenu->addAction("Add &MIDI Track", QKeySequence("Ctrl+Shift+T"), this,
+        &MainWindow::onAddMidiTrack);
+
     editMenu->addAction("&Remove Selected Track", this,
         &MainWindow::onRemoveTrack);
+
+    editMenu->addSeparator();
+    editMenu->addAction("Scan &VST Plugins...", this,
+        &MainWindow::onScanVstPlugins);
+
+    splitClipAction_ = new QAction(style()->standardIcon(QStyle::SP_ArrowRight),
+                                   "Split Clip", this);
+    splitClipAction_->setShortcut(QKeySequence(Qt::Key_S));
+    splitClipAction_->setShortcutContext(Qt::WindowShortcut);
+    splitClipAction_->setToolTip("Split selected clip at playhead (S)");
+    connect(splitClipAction_, &QAction::triggered,
+            this, &MainWindow::onSplitClipAtPlayhead);
+    addAction(splitClipAction_);
+    editMenu->addAction(splitClipAction_);
 
     // View menu
     auto* viewMenu = menuBar->addMenu("&View");
@@ -179,6 +207,11 @@ void MainWindow::createToolBar()
     mainToolBar_->setIconSize(QSize(20, 20));
 
     mainToolBar_->addWidget(transportBar_);
+    if (splitClipAction_) {
+        mainToolBar_->addAction(splitClipAction_);
+        if (auto* splitButton = mainToolBar_->widgetForAction(splitClipAction_))
+            splitButton->setAccessibleName("Split Clip");
+    }
 }
 
 void MainWindow::createDocks()
@@ -192,6 +225,24 @@ void MainWindow::createDocks()
 
     connect(mixerView_, &MixerView::effectInsertRequested,
             this, &MainWindow::onEffectInsertRequested);
+
+    connect(mixerView_, &MixerView::instrumentSelectRequested,
+            this, &MainWindow::onInstrumentSelectRequested);
+
+    // Piano Roll dock (bottom, tabbed with mixer)
+    pianoRollDock_ = new QDockWidget("Piano Roll", this);
+    pianoRollDock_->setAccessibleName("Piano Roll Dock");
+    pianoRoll_ = new PianoRollEditor(pianoRollDock_);
+    pianoRollDock_->setWidget(pianoRoll_);
+    addDockWidget(Qt::BottomDockWidgetArea, pianoRollDock_);
+
+    connect(pianoRoll_, &PianoRollEditor::notesChanged,
+            timelineView_, &TimelineView::rebuildClips);
+    tabifyDockWidget(mixerDock_, pianoRollDock_);
+    mixerDock_->raise();
+
+    connect(&editMgr_, &EditManager::midiClipDoubleClicked,
+            this, &MainWindow::onMidiClipDoubleClicked);
 
     // File browser dock (right, collapsible)
     browserDock_ = new QDockWidget("Browser", this);
@@ -244,10 +295,17 @@ void MainWindow::onNewProject()
 
 void MainWindow::onOpenProject()
 {
+    QSettings settings;
+    QString startDir = settings.value("paths/lastFileDialogDir", QDir::homePath()).toString();
+    if (startDir.isEmpty() || !QDir(startDir).exists())
+        startDir = QDir::homePath();
+
     QString path = QFileDialog::getOpenFileName(
-        this, "Open Project", QString(),
+        this, "Open Project", startDir,
         "Tracktion Edit (*.tracktionedit);;All Files (*)");
     if (path.isEmpty()) return;
+
+    settings.setValue("paths/lastFileDialogDir", QFileInfo(path).absolutePath());
 
     juce::File file(path.toStdString());
     editMgr_.loadEdit(file);
@@ -264,10 +322,17 @@ void MainWindow::onSaveProject()
 
 void MainWindow::onSaveProjectAs()
 {
+    QSettings settings;
+    QString startDir = settings.value("paths/lastFileDialogDir", QDir::homePath()).toString();
+    if (startDir.isEmpty() || !QDir(startDir).exists())
+        startDir = QDir::homePath();
+
     QString path = QFileDialog::getSaveFileName(
-        this, "Save Project", QString(),
+        this, "Save Project", startDir,
         "Tracktion Edit (*.tracktionedit);;All Files (*)");
     if (path.isEmpty()) return;
+
+    settings.setValue("paths/lastFileDialogDir", QFileInfo(path).absolutePath());
 
     juce::File file(path.toStdString());
     editMgr_.saveEditAs(file);
@@ -286,12 +351,58 @@ void MainWindow::onRemoveTrack()
     }
 }
 
+void MainWindow::onSplitClipAtPlayhead()
+{
+    if (timelineView_)
+        timelineView_->splitSelectedClipsAtPlayhead();
+}
+
+void MainWindow::onAddMidiTrack()
+{
+    editMgr_.addMidiTrack();
+}
+
+void MainWindow::onScanVstPlugins()
+{
+    auto& scanner = app_.pluginScanner();
+    if (scanner.isScanning()) return;
+
+    statusBar()->showMessage("Scanning VST plugins...");
+    connect(&scanner, &PluginScanner::scanFinished, this, [this]() {
+        auto count = app_.pluginScanner().getPluginList().getNumTypes();
+        statusBar()->showMessage(
+            QString("VST scan complete - %1 plugins found").arg(count), 5000);
+    });
+    scanner.startScan();
+}
+
 void MainWindow::onEffectInsertRequested(te::AudioTrack* track, int)
 {
     if (!track) return;
     effectChain_->setTrack(track);
     effectsDock_->setVisible(true);
     effectsDock_->raise();
+}
+
+void MainWindow::onInstrumentSelectRequested(te::AudioTrack* track)
+{
+    if (!track) return;
+
+    auto& pluginList = app_.pluginScanner().getPluginList();
+    VstSelectorDialog dlg(pluginList, true, this);
+    if (dlg.exec() == QDialog::Accepted && dlg.hasSelection()) {
+        editMgr_.setTrackInstrument(*track, dlg.selectedPlugin());
+    }
+}
+
+void MainWindow::onMidiClipDoubleClicked(te::MidiClip* clip)
+{
+    if (!clip) return;
+    pianoRollDock_->setVisible(true);
+    pianoRollDock_->raise();
+
+    if (pianoRoll_)
+        pianoRoll_->setClip(clip);
 }
 
 } // namespace freedaw

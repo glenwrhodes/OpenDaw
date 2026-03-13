@@ -42,6 +42,13 @@ set(FREEDAW_SOURCES
     src/ui/controls/WaveformWidget.h src/ui/controls/WaveformWidget.cpp
     src/ui/effects/EffectChainWidget.h   src/ui/effects/EffectChainWidget.cpp
     src/ui/effects/EffectSelectorDialog.h src/ui/effects/EffectSelectorDialog.cpp
+    src/ui/effects/VstSelectorDialog.h    src/ui/effects/VstSelectorDialog.cpp
+    src/ui/effects/PluginEditorWindow.h   src/ui/effects/PluginEditorWindow.cpp
+    src/ui/pianoroll/PianoRollEditor.h    src/ui/pianoroll/PianoRollEditor.cpp
+    src/ui/pianoroll/PianoKeyboard.h      src/ui/pianoroll/PianoKeyboard.cpp
+    src/ui/pianoroll/NoteGrid.h           src/ui/pianoroll/NoteGrid.cpp
+    src/ui/pianoroll/NoteItem.h           src/ui/pianoroll/NoteItem.cpp
+    src/ui/pianoroll/VelocityLane.h       src/ui/pianoroll/VelocityLane.cpp
     src/ui/browser/FileBrowserPanel.h    src/ui/browser/FileBrowserPanel.cpp
     src/utils/WaveformCache.h       src/utils/WaveformCache.cpp
     src/utils/ThemeManager.h        src/utils/ThemeManager.cpp

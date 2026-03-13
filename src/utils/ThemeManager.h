@@ -31,6 +31,20 @@ struct Theme {
     QColor transportPlay      {76, 175, 80};
     QColor transportStop      {200, 200, 200};
     QColor transportRecord    {244, 67, 54};
+
+    QColor midiClipBody           {70, 100, 140};
+    QColor midiClipBodySelected   {90, 130, 175};
+    QColor midiNotePreview        {140, 190, 255};
+    QColor pianoRollBackground    {25, 25, 30};
+    QColor pianoRollNote          {100, 180, 255};
+    QColor pianoRollNoteSelected  {255, 200, 80};
+    QColor pianoRollBlackKey      {20, 20, 25};
+    QColor pianoRollWhiteKey      {50, 50, 55};
+    QColor pianoRollGrid          {40, 40, 45};
+    QColor pianoKeyWhite          {230, 230, 230};
+    QColor pianoKeyBlack          {30, 30, 30};
+    QColor pianoKeyBorder         {160, 160, 160};
+    QColor pianoRollVelocityBar   {100, 180, 255};
 };
 
 class ThemeManager {

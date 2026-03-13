@@ -22,6 +22,7 @@ public slots:
 
 signals:
     void effectInsertRequested(te::AudioTrack* track, int slotIndex);
+    void instrumentSelectRequested(te::AudioTrack* track);
 
 private:
     EditManager* editMgr_;

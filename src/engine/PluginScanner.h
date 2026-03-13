@@ -33,6 +33,10 @@ public:
     bool isScanning() const { return scanning_; }
     juce::KnownPluginList& getPluginList();
 
+    void loadCachedList();
+    void saveCachedList();
+    juce::File getCacheFile() const;
+
 signals:
     void scanProgress(const QString& pluginName, int current, int total);
     void scanFinished();

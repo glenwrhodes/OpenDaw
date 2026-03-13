@@ -11,8 +11,11 @@
 #include <QMenuBar>
 #include <QToolBar>
 #include <QStatusBar>
+#include <QAction>
 
 namespace freedaw {
+
+class PianoRollEditor;
 
 class MainWindow : public QMainWindow {
     Q_OBJECT
@@ -33,8 +36,13 @@ private:
     void onSaveProject();
     void onSaveProjectAs();
     void onAddTrack();
+    void onAddMidiTrack();
     void onRemoveTrack();
+    void onSplitClipAtPlayhead();
+    void onScanVstPlugins();
     void onEffectInsertRequested(te::AudioTrack* track, int slotIndex);
+    void onInstrumentSelectRequested(te::AudioTrack* track);
+    void onMidiClipDoubleClicked(te::MidiClip* clip);
 
     FreeDawApplication& app_;
     EditManager& editMgr_;
@@ -44,12 +52,15 @@ private:
     MixerView*    mixerView_          = nullptr;
     EffectChainWidget* effectChain_   = nullptr;
     FileBrowserPanel*  fileBrowser_   = nullptr;
+    PianoRollEditor*   pianoRoll_     = nullptr;
 
     QDockWidget* mixerDock_           = nullptr;
     QDockWidget* effectsDock_         = nullptr;
     QDockWidget* browserDock_         = nullptr;
+    QDockWidget* pianoRollDock_       = nullptr;
 
     QToolBar* mainToolBar_            = nullptr;
+    QAction* splitClipAction_         = nullptr;
 };
 
 } // namespace freedaw

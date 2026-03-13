@@ -40,4 +40,36 @@ juce::StringArray AudioEngine::getAvailableOutputDevices() const
     return result;
 }
 
+juce::StringArray AudioEngine::getAvailableMidiInputDevices() const
+{
+    juce::StringArray result;
+    auto& dm = engine_->getDeviceManager();
+    for (int i = 0; i < dm.getNumMidiInDevices(); ++i) {
+        auto dev = dm.getMidiInDevice(i);
+        if (dev)
+            result.add(dev->getName());
+    }
+    return result;
+}
+
+juce::StringArray AudioEngine::getAvailableMidiOutputDevices() const
+{
+    juce::StringArray result;
+    auto& dm = engine_->getDeviceManager();
+    for (int i = 0; i < dm.getNumMidiOutDevices(); ++i)
+        if (auto dev = dm.getMidiOutDevice(i))
+            result.add(dev->getName());
+    return result;
+}
+
+void AudioEngine::enableAllMidiInputDevices()
+{
+    auto& dm = engine_->getDeviceManager();
+    for (int i = 0; i < dm.getNumMidiInDevices(); ++i) {
+        auto dev = dm.getMidiInDevice(i);
+        if (dev)
+            dev->setEnabled(true);
+    }
+}
+
 } // namespace freedaw

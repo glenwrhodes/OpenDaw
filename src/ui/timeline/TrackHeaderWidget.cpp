@@ -33,6 +33,11 @@ TrackHeaderWidget::TrackHeaderWidget(te::AudioTrack* track, EditManager* editMgr
     mainLayout->setContentsMargins(4, 3, 4, 3);
     mainLayout->setSpacing(2);
 
+    bool isMidi = editMgr_->isMidiTrack(track_);
+
+    auto* topRow = new QHBoxLayout();
+    topRow->setSpacing(3);
+
     nameLabel_ = new QLabel(
         QString::fromStdString(track_->getName().toStdString()), this);
     nameLabel_->setAccessibleName("Track Name");
@@ -41,7 +46,40 @@ TrackHeaderWidget::TrackHeaderWidget(te::AudioTrack* track, EditManager* editMgr
         QString("QLabel { color: %1; font-size: 10px; font-weight: bold; "
                 "background: %2; border-radius: 2px; padding: 2px; }")
             .arg(theme.text.name(), theme.background.name()));
-    mainLayout->addWidget(nameLabel_);
+    topRow->addWidget(nameLabel_, 1);
+
+    auto* typeBadge = new QLabel(isMidi ? "MIDI" : "AUDIO", this);
+    typeBadge->setAccessibleName("Track Type");
+    typeBadge->setAlignment(Qt::AlignCenter);
+    QColor badgeBg = isMidi ? theme.midiClipBody : theme.accent;
+    typeBadge->setStyleSheet(
+        QString("QLabel { color: #fff; font-size: 7px; font-weight: bold; "
+                "background: %1; border-radius: 2px; padding: 1px 3px; }")
+            .arg(badgeBg.name()));
+    typeBadge->setFixedHeight(16);
+    topRow->addWidget(typeBadge);
+
+    mainLayout->addLayout(topRow);
+
+    if (isMidi) {
+        auto* instrument = editMgr_->getTrackInstrument(track_);
+        QString instrName = instrument
+            ? QString::fromStdString(instrument->getName().toStdString())
+            : "No Instrument";
+        instrumentBtn_ = new QPushButton(instrName, this);
+        instrumentBtn_->setAccessibleName("Select Instrument");
+        instrumentBtn_->setFixedHeight(18);
+        instrumentBtn_->setStyleSheet(
+            QString("QPushButton { background: %1; color: %2; border: 1px solid %3; "
+                    "border-radius: 2px; font-size: 8px; padding: 1px 3px; }"
+                    "QPushButton:hover { background: %4; }")
+                .arg(theme.background.name(), theme.text.name(),
+                     theme.border.name(), theme.surfaceLight.name()));
+        connect(instrumentBtn_, &QPushButton::clicked, this, [this]() {
+            emit instrumentSelectRequested(track_);
+        });
+        mainLayout->addWidget(instrumentBtn_);
+    }
 
     auto* btnRow = new QHBoxLayout();
     btnRow->setSpacing(2);

@@ -3,6 +3,7 @@
 #include "AudioEngine.h"
 #include <tracktion_engine/tracktion_engine.h>
 #include <QObject>
+#include <unordered_set>
 #include <memory>
 
 namespace freedaw {
@@ -23,6 +24,7 @@ public:
     te::TransportControl& transport();
 
     te::AudioTrack* addAudioTrack();
+    te::AudioTrack* addMidiTrack();
     void removeTrack(te::Track* track);
     int  trackCount() const;
     te::AudioTrack* getAudioTrack(int index) const;
@@ -31,6 +33,20 @@ public:
     void addAudioClipToTrack(te::AudioTrack& track,
                              const juce::File& audioFile,
                              double startBeat);
+
+    te::MidiClip* addMidiClipToTrack(te::AudioTrack& track,
+                                     double startBeat, double lengthBeats);
+    te::MidiClip* importMidiFileToTrack(te::AudioTrack& track,
+                                        const juce::File& midiFile,
+                                        double startBeat);
+
+    bool isMidiTrack(te::AudioTrack* track) const;
+    te::Plugin* getTrackInstrument(te::AudioTrack* track) const;
+    void setTrackInstrument(te::AudioTrack& track,
+                            const juce::PluginDescription& desc);
+    void removeTrackInstrument(te::AudioTrack& track);
+
+    void markAsMidiTrack(te::AudioTrack* track);
 
     double getBpm() const;
     void   setBpm(double bpm);
@@ -44,6 +60,7 @@ signals:
     void editChanged();
     void tracksChanged();
     void transportStateChanged();
+    void midiClipDoubleClicked(te::MidiClip* clip);
 
 private:
     void createDefaultEdit();
@@ -52,6 +69,7 @@ private:
     AudioEngine& audioEngine_;
     std::unique_ptr<te::Edit> edit_;
     juce::File currentFile_;
+    std::unordered_set<uint64_t> midiTrackIds_;
 };
 
 } // namespace freedaw

@@ -14,6 +14,7 @@
 #include <QVBoxLayout>
 #include <QHBoxLayout>
 #include <QSplitter>
+#include <QEvent>
 #include <vector>
 #include <memory>
 
@@ -29,9 +30,13 @@ protected:
     void dragEnterEvent(QGraphicsSceneDragDropEvent* event) override;
     void dragMoveEvent(QGraphicsSceneDragDropEvent* event) override;
     void dropEvent(QGraphicsSceneDragDropEvent* event) override;
+    void mouseDoubleClickEvent(QGraphicsSceneMouseEvent* event) override;
+    void contextMenuEvent(QGraphicsSceneContextMenuEvent* event) override;
 
 signals:
     void fileDropped(const QString& filePath, double beat, int trackIndex);
+    void emptyAreaDoubleClicked(double sceneX, double sceneY);
+    void backgroundRightClicked(QPointF scenePos, QPoint screenPos);
 };
 
 class TimelineView : public QWidget {
@@ -58,18 +63,22 @@ public:
 
 signals:
     void snapModeChanged(SnapMode mode);
+    void instrumentSelectRequested(te::AudioTrack* track);
 
 public slots:
     void onTracksChanged();
     void onEditChanged();
     void onTransportPositionChanged();
+    void splitSelectedClipsAtPlayhead();
 
 private:
+    bool eventFilter(QObject* watched, QEvent* event) override;
     void rebuildTrackHeaders();
     void drawGridLines();
     void updatePlayhead();
     void syncHeaderScroll();
     void handleFileDrop(const QString& path, double beat, int trackIndex);
+    void handleEmptyAreaDoubleClick(double sceneX, double sceneY);
 
     EditManager* editMgr_;
 

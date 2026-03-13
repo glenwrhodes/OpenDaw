@@ -32,6 +32,7 @@ public:
 
 signals:
     void effectInsertRequested(te::AudioTrack* track, int slotIndex);
+    void instrumentSelectRequested(te::AudioTrack* track);
 
 private:
     void setupUI();
@@ -44,6 +45,7 @@ private:
     bool isMaster_ = false;
 
     QLabel* nameLabel_ = nullptr;
+    QPushButton* instrumentBtn_ = nullptr;
     VolumeFader* fader_ = nullptr;
     RotaryKnob* panKnob_ = nullptr;
     LevelMeter* meter_ = nullptr;

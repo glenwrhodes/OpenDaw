@@ -65,16 +65,39 @@ void ChannelStrip::setupUI()
 
     // ── Top section: name, FX slots, pan ──
 
+    bool isMidi = track_ && editMgr_ && editMgr_->isMidiTrack(track_);
+
     nameLabel_ = new QLabel(this);
     nameLabel_->setAccessibleName("Track Name");
     if (track_)
         nameLabel_->setText(QString::fromStdString(track_->getName().toStdString()));
     nameLabel_->setAlignment(Qt::AlignCenter);
+    QColor nameBg = isMidi ? theme.midiClipBody : theme.background;
     nameLabel_->setStyleSheet(
         QString("QLabel { color: %1; font-size: 10px; font-weight: bold; "
                 "background: %2; border-radius: 2px; padding: 2px; }")
-            .arg(theme.text.name(), theme.background.name()));
+            .arg(theme.text.name(), nameBg.name()));
     layout->addWidget(nameLabel_);
+
+    if (isMidi) {
+        auto* instrument = editMgr_->getTrackInstrument(track_);
+        QString instrName = instrument
+            ? QString::fromStdString(instrument->getName().toStdString())
+            : "No Instrument";
+        instrumentBtn_ = new QPushButton(instrName, this);
+        instrumentBtn_->setAccessibleName("Select Instrument");
+        instrumentBtn_->setFixedHeight(22);
+        instrumentBtn_->setStyleSheet(
+            QString("QPushButton { background: %1; color: %2; border: 1px solid %3; "
+                    "border-radius: 2px; font-size: 8px; padding: 1px 3px; }"
+                    "QPushButton:hover { background: %4; }")
+                .arg(theme.background.name(), theme.text.name(),
+                     theme.border.name(), theme.surfaceLight.name()));
+        connect(instrumentBtn_, &QPushButton::clicked, this, [this]() {
+            emit instrumentSelectRequested(track_);
+        });
+        layout->addWidget(instrumentBtn_);
+    }
 
     fxSlot1_ = new QComboBox(this);
     fxSlot1_->setAccessibleName("Effect Slot 1");

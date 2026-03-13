@@ -1,9 +1,13 @@
 #include "TimelineView.h"
 #include "utils/ThemeManager.h"
 #include <QGraphicsSceneDragDropEvent>
+#include <QGraphicsSceneMouseEvent>
+#include <QGraphicsSceneContextMenuEvent>
 #include <QMimeData>
 #include <QUrl>
 #include <QScrollBar>
+#include <QWheelEvent>
+#include <QMenu>
 #include <cmath>
 
 namespace freedaw {
@@ -35,6 +39,38 @@ void TimelineScene::dropEvent(QGraphicsSceneDragDropEvent* event)
         emit fileDropped(path, pos.x(), int(pos.y()));
     }
     event->acceptProposedAction();
+}
+
+void TimelineScene::mouseDoubleClickEvent(QGraphicsSceneMouseEvent* event)
+{
+    if (event->button() == Qt::LeftButton) {
+        auto hitItems = items(event->scenePos());
+        bool hitClip = false;
+        for (auto* item : hitItems) {
+            if (dynamic_cast<ClipItem*>(item)) { hitClip = true; break; }
+        }
+        if (!hitClip) {
+            emit emptyAreaDoubleClicked(event->scenePos().x(), event->scenePos().y());
+            event->accept();
+            return;
+        }
+    }
+    QGraphicsScene::mouseDoubleClickEvent(event);
+}
+
+void TimelineScene::contextMenuEvent(QGraphicsSceneContextMenuEvent* event)
+{
+    auto hitItems = items(event->scenePos());
+    bool hitClip = false;
+    for (auto* item : hitItems) {
+        if (dynamic_cast<ClipItem*>(item)) { hitClip = true; break; }
+    }
+    if (!hitClip) {
+        emit backgroundRightClicked(event->scenePos(), event->screenPos());
+        event->accept();
+        return;
+    }
+    QGraphicsScene::contextMenuEvent(event);
 }
 
 // ── TimelineView ────────────────────────────────────────────────────────────
@@ -108,6 +144,7 @@ TimelineView::TimelineView(EditManager* editMgr, QWidget* parent)
     graphicsView_->setRenderHint(QPainter::Antialiasing, true);
     graphicsView_->setAlignment(Qt::AlignLeft | Qt::AlignTop);
     graphicsView_->setBackgroundBrush(theme.background);
+    graphicsView_->viewport()->installEventFilter(this);
     bodyLayout_->addWidget(graphicsView_, 1);
 
     outerLayout->addWidget(bodyRow, 1);
@@ -147,6 +184,51 @@ TimelineView::TimelineView(EditManager* editMgr, QWidget* parent)
     connect(scene_, &TimelineScene::fileDropped,
             this, &TimelineView::handleFileDrop);
 
+    // Double-click on empty area -> create blank MIDI clip on MIDI tracks
+    connect(scene_, &TimelineScene::emptyAreaDoubleClicked,
+            this, &TimelineView::handleEmptyAreaDoubleClick);
+
+    // Right-click on empty area -> timeline context menu
+    connect(scene_, &TimelineScene::backgroundRightClicked,
+            this, [this](QPointF scenePos, QPoint screenPos) {
+                QMenu menu;
+                menu.setAccessibleName("Timeline Context Menu");
+
+                menu.addAction("Add Audio Track", [this]() {
+                    editMgr_->addAudioTrack();
+                });
+                menu.addAction("Add MIDI Track", [this]() {
+                    editMgr_->addMidiTrack();
+                });
+
+                int trackIdx = static_cast<int>(scenePos.y() / trackHeight_);
+                auto tracks = editMgr_->getAudioTracks();
+                if (trackIdx >= 0 && trackIdx < tracks.size()) {
+                    auto* track = tracks[trackIdx];
+                    bool isMidi = editMgr_->isMidiTrack(track);
+
+                    menu.addSeparator();
+                    if (isMidi) {
+                        double beat = snapper_.snapBeat(scenePos.x() / pixelsPerBeat_);
+                        if (beat < 0) beat = 0;
+                        double beatsPerBar = editMgr_->getTimeSigNumerator();
+                        double barBeat = std::floor(beat / beatsPerBar) * beatsPerBar;
+
+                        menu.addAction("Create Empty MIDI Clip Here", [this, track, barBeat, beatsPerBar]() {
+                            auto* clip = editMgr_->addMidiClipToTrack(*track, barBeat, beatsPerBar);
+                            rebuildClips();
+                            if (clip)
+                                emit editMgr_->midiClipDoubleClicked(clip);
+                        });
+                    }
+                    menu.addAction("Remove Track", [this, track]() {
+                        editMgr_->removeTrack(track);
+                    });
+                }
+
+                menu.exec(screenPos);
+            });
+
     // Playhead animation
     connect(&playheadTimer_, &QTimer::timeout,
             this, &TimelineView::updatePlayhead);
@@ -182,6 +264,35 @@ void TimelineView::zoomIn()      { setPixelsPerBeat(pixelsPerBeat_ * 1.3); }
 void TimelineView::zoomOut()     { setPixelsPerBeat(pixelsPerBeat_ / 1.3); }
 void TimelineView::zoomVerticalIn()  { setTrackHeight(trackHeight_ * 1.2); }
 void TimelineView::zoomVerticalOut() { setTrackHeight(trackHeight_ / 1.2); }
+
+bool TimelineView::eventFilter(QObject* watched, QEvent* event)
+{
+    if (watched == graphicsView_->viewport() && event->type() == QEvent::Wheel) {
+        auto* wheelEvent = static_cast<QWheelEvent*>(event);
+
+        if (wheelEvent->modifiers() & Qt::ControlModifier) {
+            const QPoint delta = wheelEvent->angleDelta();
+            if (delta.y() != 0) {
+                const double viewX = wheelEvent->position().x();
+                const int oldScrollX = graphicsView_->horizontalScrollBar()->value();
+                const double beatAtCursor = (oldScrollX + viewX) / pixelsPerBeat_;
+
+                const double zoomSteps = static_cast<double>(delta.y()) / 120.0;
+                const double zoomFactor = std::pow(1.15, zoomSteps);
+                setPixelsPerBeat(pixelsPerBeat_ * zoomFactor);
+
+                const int newScrollX = static_cast<int>(
+                    std::round(beatAtCursor * pixelsPerBeat_ - viewX));
+                graphicsView_->horizontalScrollBar()->setValue(newScrollX);
+            }
+
+            wheelEvent->accept();
+            return true;
+        }
+    }
+
+    return QWidget::eventFilter(watched, event);
+}
 
 void TimelineView::onTransportPositionChanged()
 {
@@ -219,6 +330,8 @@ void TimelineView::rebuildTrackHeaders()
     for (auto* track : tracks) {
         auto* header = new TrackHeaderWidget(track, editMgr_, headerContainer_);
         header->setTrackHeight(int(trackHeight_));
+        connect(header, &TrackHeaderWidget::instrumentSelectRequested,
+                this, &TimelineView::instrumentSelectRequested);
         headerVLayout_->addWidget(header);
         trackHeaders_.push_back(header);
     }
@@ -250,7 +363,16 @@ void TimelineView::rebuildClips()
     auto tracks = editMgr_->getAudioTracks();
     int numTracks = tracks.size();
 
+    // Keep a sensible minimum range (~50 bars in 4/4), but grow to fit loaded clips.
     double totalBeats = 200.0;
+    for (auto* track : tracks) {
+        for (auto* clip : track->getClips()) {
+            auto& ts = clip->edit.tempoSequence;
+            auto endTime = clip->getPosition().getEnd();
+            const double endBeat = ts.toBeats(endTime).inBeats();
+            totalBeats = std::max(totalBeats, endBeat + 16.0); // add right-side scroll headroom
+        }
+    }
     double sceneWidth = totalBeats * pixelsPerBeat_;
     double sceneHeight = numTracks * trackHeight_;
     scene_->setSceneRect(0, 0, sceneWidth, std::max(sceneHeight, double(height())));
@@ -274,8 +396,16 @@ void TimelineView::rebuildClips()
         for (auto* clip : track->getClips()) {
             auto* item = new ClipItem(clip, ti, pixelsPerBeat_, trackHeight_);
             item->setDragContext(&snapper_, editMgr_,
-                                &pixelsPerBeat_, &trackHeight_, numTracks);
-            item->loadWaveform(int(std::max(50.0, rect().width() / 2.0)));
+                                &pixelsPerBeat_, &trackHeight_, numTracks,
+                                [this]() { rebuildClips(); });
+            if (item->isMidiClip()) {
+                item->loadMidiPreview();
+            } else {
+                const int waveformPoints = std::clamp(
+                    static_cast<int>(std::max(50.0, item->rect().width() / 2.0)),
+                    50, 4096);
+                item->loadWaveform(waveformPoints);
+            }
             item->updateGeometry(pixelsPerBeat_, trackHeight_, 0);
             item->setZValue(1);
             scene_->addItem(item);
@@ -327,8 +457,8 @@ void TimelineView::handleFileDrop(const QString& path, double xPos, int yPos)
 {
     if (!editMgr_ || !editMgr_->edit()) return;
 
-    juce::File audioFile(path.toStdString());
-    if (!audioFile.existsAsFile()) return;
+    juce::File droppedFile(path.toStdString());
+    if (!droppedFile.existsAsFile()) return;
 
     double beat = xPos / pixelsPerBeat_;
     int trackIdx = int(yPos / trackHeight_);
@@ -342,8 +472,69 @@ void TimelineView::handleFileDrop(const QString& path, double xPos, int yPos)
 
     if (tracks.isEmpty()) return;
 
-    editMgr_->addAudioClipToTrack(*tracks[trackIdx], audioFile, beat);
+    auto ext = droppedFile.getFileExtension().toLowerCase();
+    if (ext == ".mid" || ext == ".midi") {
+        editMgr_->importMidiFileToTrack(*tracks[trackIdx], droppedFile, beat);
+    } else {
+        editMgr_->addAudioClipToTrack(*tracks[trackIdx], droppedFile, beat);
+    }
     rebuildClips();
+}
+
+void TimelineView::splitSelectedClipsAtPlayhead()
+{
+    if (!editMgr_ || !editMgr_->edit())
+        return;
+
+    const auto playheadTime = editMgr_->transport().getPosition();
+    bool didSplitAny = false;
+
+    for (auto* item : clipItems_) {
+        if (!item || !item->isSelected())
+            continue;
+
+        auto* clip = item->clip();
+        if (!clip)
+            continue;
+
+        const auto clipRange = clip->getPosition().time;
+        if (playheadTime <= clipRange.getStart() || playheadTime >= clipRange.getEnd())
+            continue;
+
+        if (auto* clipTrack = dynamic_cast<te::ClipTrack*>(clip->getClipTrack())) {
+            if (clipTrack->splitClip(*clip, playheadTime) != nullptr)
+                didSplitAny = true;
+        }
+    }
+
+    if (didSplitAny)
+        rebuildClips();
+}
+
+void TimelineView::handleEmptyAreaDoubleClick(double sceneX, double sceneY)
+{
+    if (!editMgr_ || !editMgr_->edit()) return;
+
+    double beat = sceneX / pixelsPerBeat_;
+    int trackIdx = static_cast<int>(sceneY / trackHeight_);
+
+    beat = snapper_.snapBeat(beat);
+    if (beat < 0) beat = 0;
+
+    auto tracks = editMgr_->getAudioTracks();
+    if (trackIdx < 0 || trackIdx >= tracks.size() || tracks.isEmpty()) return;
+
+    auto* track = tracks[trackIdx];
+    if (!editMgr_->isMidiTrack(track)) return;
+
+    double beatsPerBar = editMgr_->getTimeSigNumerator();
+    double barBeat = std::floor(beat / beatsPerBar) * beatsPerBar;
+
+    auto* clip = editMgr_->addMidiClipToTrack(*track, barBeat, beatsPerBar);
+    rebuildClips();
+
+    if (clip)
+        emit editMgr_->midiClipDoubleClicked(clip);
 }
 
 } // namespace freedaw

@@ -6,6 +6,7 @@
 #include <QDrag>
 #include <QMimeData>
 #include <QApplication>
+#include <QSettings>
 
 namespace freedaw {
 
@@ -85,20 +86,28 @@ FileBrowserPanel::FileBrowserPanel(QWidget* parent)
 
     layout_->addWidget(treeView_, 1);
 
-    // Navigate to Music by default
-    QString musicDir = QStandardPaths::writableLocation(QStandardPaths::MusicLocation);
-    if (musicDir.isEmpty() || !QDir(musicDir).exists())
-        musicDir = QDir::homePath();
-    navigateTo(musicDir);
+    // Restore last browser location if available, otherwise fall back to Music.
+    QSettings settings;
+    QString lastDir = settings.value("paths/lastBrowserDir").toString();
+    if (lastDir.isEmpty() || !QDir(lastDir).exists()) {
+        lastDir = QStandardPaths::writableLocation(QStandardPaths::MusicLocation);
+        if (lastDir.isEmpty() || !QDir(lastDir).exists())
+            lastDir = QDir::homePath();
+    }
+    navigateTo(lastDir);
 
     setupDragSupport();
 }
 
 void FileBrowserPanel::navigateTo(const QString& path)
 {
+    if (path.isEmpty() || !QDir(path).exists())
+        return;
+
     model_->setRootPath(path);
     treeView_->setRootIndex(model_->index(path));
     pathEdit_->setText(path);
+    QSettings().setValue("paths/lastBrowserDir", path);
 }
 
 void FileBrowserPanel::setupDragSupport()

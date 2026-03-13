@@ -21,6 +21,10 @@ public:
     juce::StringArray getAvailableInputDevices() const;
     juce::StringArray getAvailableOutputDevices() const;
 
+    juce::StringArray getAvailableMidiInputDevices() const;
+    juce::StringArray getAvailableMidiOutputDevices() const;
+    void enableAllMidiInputDevices();
+
 private:
     std::unique_ptr<te::Engine> engine_;
 };

@@ -69,6 +69,8 @@ void MixerView::rebuildStrips()
         auto* strip = new ChannelStrip(track, editMgr_, stripContainer_);
         connect(strip, &ChannelStrip::effectInsertRequested,
                 this, &MixerView::effectInsertRequested);
+        connect(strip, &ChannelStrip::instrumentSelectRequested,
+                this, &MixerView::instrumentSelectRequested);
         stripLayout_->addWidget(strip);
         strips_.push_back(strip);
     }

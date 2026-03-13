@@ -27,6 +27,7 @@ public:
 
 signals:
     void effectInsertRequested(te::AudioTrack* track);
+    void instrumentSelectRequested(te::AudioTrack* track);
 
 private:
     void updateMeter();
@@ -36,6 +37,7 @@ private:
     EditManager* editMgr_;
 
     QLabel* nameLabel_;
+    QPushButton* instrumentBtn_ = nullptr;
     QPushButton* muteBtn_;
     QPushButton* soloBtn_;
     QPushButton* armBtn_;
