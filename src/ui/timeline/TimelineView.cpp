@@ -46,7 +46,13 @@ void TimelineScene::dropEvent(QGraphicsSceneDragDropEvent* event)
 void TimelineScene::mousePressEvent(QGraphicsSceneMouseEvent* event)
 {
     if (event->button() == Qt::LeftButton) {
-        emit backgroundClicked(event->scenePos().x(), event->scenePos().y());
+        auto hitItems = items(event->scenePos());
+        bool hitClip = false;
+        for (auto* item : hitItems) {
+            if (dynamic_cast<ClipItem*>(item)) { hitClip = true; break; }
+        }
+        if (!hitClip)
+            emit backgroundClicked(event->scenePos().x(), event->scenePos().y());
     }
     QGraphicsScene::mousePressEvent(event);
 }
@@ -194,13 +200,10 @@ TimelineView::TimelineView(EditManager* editMgr, QWidget* parent)
     connect(scene_, &TimelineScene::fileDropped,
             this, &TimelineView::handleFileDrop);
 
-    // Click on timeline background -> select track
+    // Click on timeline blank area -> clear track selection
     connect(scene_, &TimelineScene::backgroundClicked,
-            this, [this](double, double sceneY) {
-                int trackIdx = static_cast<int>(sceneY / trackHeight_);
-                auto tracks = editMgr_->getAudioTracks();
-                if (trackIdx >= 0 && trackIdx < tracks.size())
-                    selectTrack(tracks[trackIdx]);
+            this, [this](double, double) {
+                selectTrack(nullptr);
             });
 
     // Double-click on empty area -> create blank MIDI clip on MIDI tracks
@@ -359,6 +362,19 @@ void TimelineView::onEditChanged()
 void TimelineView::onTracksChanged()
 {
     qDebug() << "[TimelineView] onTracksChanged start";
+    auto tracks = editMgr_->getAudioTracks();
+    bool selectedTrackStillExists = false;
+    for (auto* track : tracks) {
+        if (track == selectedTrack_) {
+            selectedTrackStillExists = true;
+            break;
+        }
+    }
+    if (!selectedTrackStillExists && selectedTrack_ != nullptr) {
+        selectedTrack_ = nullptr;
+        emit trackSelected(nullptr);
+    }
+
     onEditChanged();
     qDebug() << "[TimelineView] about to rebuildTrackHeaders";
     rebuildTrackHeaders();
@@ -387,6 +403,7 @@ void TimelineView::rebuildTrackHeaders()
                 this, &TimelineView::instrumentSelectRequested);
         connect(header, &TrackHeaderWidget::trackSelected,
                 this, &TimelineView::selectTrack);
+        header->setSelected(track == selectedTrack_);
         headerVLayout_->addWidget(header);
         trackHeaders_.push_back(header);
     }
@@ -597,10 +614,16 @@ void TimelineView::deleteSelectedClips()
 
 void TimelineView::selectTrack(te::AudioTrack* track)
 {
+    selectedTrack_ = track;
     for (auto* h : trackHeaders_)
         h->setSelected(h->track() == track);
 
     emit trackSelected(track);
+}
+
+void TimelineView::setSelectedTrack(te::AudioTrack* track)
+{
+    selectTrack(track);
 }
 
 void TimelineView::handleEmptyAreaDoubleClick(double sceneX, double sceneY)

@@ -71,10 +71,11 @@ void RotaryKnob::paintEvent(QPaintEvent*)
     double angle = (startAngle + valueSpan) * M_PI / 180.0;
     QPointF center = innerRect.center();
     double r = innerRect.width() / 2.0 - 2.0;
-    QPointF tip(center.x() - r * std::cos(angle),
-                center.y() + r * std::sin(angle));
-    QPointF base(center.x() - (r * 0.3) * std::cos(angle),
-                 center.y() + (r * 0.3) * std::sin(angle));
+    // Qt's y-axis is downward, so use +cos/-sin to match arc direction.
+    QPointF tip(center.x() + r * std::cos(angle),
+                center.y() - r * std::sin(angle));
+    QPointF base(center.x() + (r * 0.3) * std::cos(angle),
+                 center.y() - (r * 0.3) * std::sin(angle));
 
     p.setPen(QPen(theme.accentLight, 2.0, Qt::SolidLine, Qt::RoundCap));
     p.drawLine(base, tip);

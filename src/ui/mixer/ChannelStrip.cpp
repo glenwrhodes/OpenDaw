@@ -23,10 +23,18 @@ ChannelStrip::ChannelStrip(te::AudioTrack* track, EditManager* editMgr,
     setAccessibleName("Channel Strip");
     setupUI();
 
-    if (track_) {
-        levelMeterPlugin_ = track_->getLevelMeterPlugin();
-        if (levelMeterPlugin_)
-            levelMeterPlugin_->measurer.addClient(meterClient_);
+    reconnectLevelMeterSource();
+
+    if (editMgr_) {
+        connect(editMgr_, &EditManager::aboutToChangeEdit, this, [this]() {
+            if (levelMeterPlugin_) {
+                levelMeterPlugin_->measurer.removeClient(meterClient_);
+                levelMeterPlugin_ = nullptr;
+            }
+        });
+        connect(editMgr_, &EditManager::editChanged, this, [this]() {
+            reconnectLevelMeterSource();
+        });
     }
 
     connect(&meterTimer_, &QTimer::timeout, this, &ChannelStrip::updateMeter);
@@ -45,6 +53,7 @@ ChannelStrip* ChannelStrip::createMasterStrip(EditManager* editMgr,
 {
     auto* strip = new ChannelStrip(nullptr, editMgr, parent);
     strip->isMaster_ = true;
+    strip->reconnectLevelMeterSource();
     strip->setupMasterUI();
     return strip;
 }
@@ -52,6 +61,8 @@ ChannelStrip* ChannelStrip::createMasterStrip(EditManager* editMgr,
 void ChannelStrip::setupUI()
 {
     auto& theme = ThemeManager::instance().current();
+    setObjectName("channelStrip");
+    setAttribute(Qt::WA_StyledBackground, true);
     setFixedWidth(88);
     setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Expanding);
     setAutoFillBackground(true);
@@ -63,7 +74,7 @@ void ChannelStrip::setupUI()
     layout->setContentsMargins(4, 4, 4, 4);
     layout->setSpacing(3);
 
-    // ── Top section: name, FX slots, pan ──
+    // ── Top section: name, instrument, pan ──
 
     bool isMidi = track_ && editMgr_ && editMgr_->isMidiTrack(track_);
 
@@ -99,34 +110,6 @@ void ChannelStrip::setupUI()
         layout->addWidget(instrumentBtn_);
     }
 
-    fxSlot1_ = new QComboBox(this);
-    fxSlot1_->setAccessibleName("Effect Slot 1");
-    fxSlot1_->addItem("-- FX 1 --");
-    fxSlot1_->addItem("Reverb");
-    fxSlot1_->addItem("EQ");
-    fxSlot1_->addItem("Compressor");
-    fxSlot1_->setFixedHeight(24);
-    fxSlot1_->setStyleSheet(
-        QString("QComboBox { font-size: 9px; background: %1; color: %2; border: 1px solid %3; padding: 2px 4px; }"
-                "QComboBox QAbstractItemView { background: %4; color: %2; selection-background-color: %5; }")
-            .arg(theme.background.name(), theme.text.name(), theme.border.name(),
-                 theme.surface.name(), theme.accent.name()));
-    connect(fxSlot1_, qOverload<int>(&QComboBox::currentIndexChanged),
-            this, [this](int) { emit effectInsertRequested(track_, 0); });
-    layout->addWidget(fxSlot1_);
-
-    fxSlot2_ = new QComboBox(this);
-    fxSlot2_->setAccessibleName("Effect Slot 2");
-    fxSlot2_->addItem("-- FX 2 --");
-    fxSlot2_->addItem("Reverb");
-    fxSlot2_->addItem("EQ");
-    fxSlot2_->addItem("Compressor");
-    fxSlot2_->setFixedHeight(24);
-    fxSlot2_->setStyleSheet(fxSlot1_->styleSheet());
-    connect(fxSlot2_, qOverload<int>(&QComboBox::currentIndexChanged),
-            this, [this](int) { emit effectInsertRequested(track_, 1); });
-    layout->addWidget(fxSlot2_);
-
     panKnob_ = new RotaryKnob(this);
     panKnob_->setAccessibleName("Pan");
     panKnob_->setRange(-1.0, 1.0);
@@ -140,6 +123,14 @@ void ChannelStrip::setupUI()
     layout->addLayout(panRow);
 
     connect(panKnob_, &RotaryKnob::valueChanged, this, [this](double v) {
+        if (isMaster_) {
+            if (editMgr_ && editMgr_->edit()) {
+                if (auto masterVol = editMgr_->edit()->getMasterVolumePlugin())
+                    masterVol->setPan(float(v));
+            }
+            return;
+        }
+
         if (!track_) return;
         for (auto* plugin : track_->pluginList.getPlugins()) {
             if (auto* volPan = dynamic_cast<te::VolumeAndPanPlugin*>(plugin)) {
@@ -168,6 +159,12 @@ void ChannelStrip::setupUI()
     layout->addLayout(faderRow, 1);
 
     connect(fader_, &VolumeFader::valueChanged, this, [this](double v) {
+        if (isMaster_) {
+            if (editMgr_ && editMgr_->edit())
+                editMgr_->edit()->setMasterVolumeSliderPos(float(v));
+            return;
+        }
+
         if (!track_) return;
         for (auto* plugin : track_->pluginList.getPlugins()) {
             if (auto* volPan = dynamic_cast<te::VolumeAndPanPlugin*>(plugin)) {
@@ -211,18 +208,34 @@ void ChannelStrip::setupUI()
     btnRow->addWidget(soloBtn_);
     btnRow->addWidget(armBtn_);
     layout->addLayout(btnRow);
+
+    updateSelectionStyle();
 }
 
 void ChannelStrip::setupMasterUI()
 {
     if (nameLabel_)
         nameLabel_->setText("Master");
+
+    if (editMgr_ && editMgr_->edit()) {
+        if (auto masterVol = editMgr_->edit()->getMasterVolumePlugin()) {
+            if (fader_)
+                fader_->setValue(masterVol->getSliderPos());
+            if (panKnob_)
+                panKnob_->setValue(masterVol->getPan());
+        }
+    }
+
     if (armBtn_)
         armBtn_->setVisible(false);
-    if (fxSlot1_)
-        fxSlot1_->setVisible(false);
-    if (fxSlot2_)
-        fxSlot2_->setVisible(false);
+}
+
+void ChannelStrip::setSelected(bool selected)
+{
+    if (selected_ == selected)
+        return;
+    selected_ = selected;
+    updateSelectionStyle();
 }
 
 void ChannelStrip::refresh()
@@ -235,12 +248,44 @@ void ChannelStrip::refresh()
 
 void ChannelStrip::updateMeter()
 {
-    if (!track_ || !editMgr_ || !editMgr_->edit() || !levelMeterPlugin_)
+    if (!editMgr_ || !editMgr_->edit() || !levelMeterPlugin_)
         return;
 
     auto levelL = meterClient_.getAndClearAudioLevel(0);
     auto levelR = meterClient_.getAndClearAudioLevel(1);
+
+    if (isMaster_) {
+        if (auto masterVol = editMgr_->edit()->getMasterVolumePlugin()) {
+            const float masterDb = masterVol->getVolumeDb();
+            levelL.dB += masterDb;
+            levelR.dB += masterDb;
+        }
+    }
+
     meter_->setLevel(dbToNormalized(levelL.dB), dbToNormalized(levelR.dB));
+}
+
+void ChannelStrip::reconnectLevelMeterSource()
+{
+    if (levelMeterPlugin_) {
+        levelMeterPlugin_->measurer.removeClient(meterClient_);
+        levelMeterPlugin_ = nullptr;
+    }
+
+    if (!editMgr_ || !editMgr_->edit())
+        return;
+
+    if (isMaster_) {
+        auto masterMeters = editMgr_->edit()
+                                ->getMasterPluginList()
+                                .getPluginsOfType<te::LevelMeterPlugin>();
+        levelMeterPlugin_ = masterMeters.isEmpty() ? nullptr : masterMeters.getLast();
+    } else if (track_) {
+        levelMeterPlugin_ = track_->getLevelMeterPlugin();
+    }
+
+    if (levelMeterPlugin_)
+        levelMeterPlugin_->measurer.addClient(meterClient_);
 }
 
 void ChannelStrip::applyToggleStyle(QPushButton* btn, const QColor& activeColor)
@@ -252,6 +297,31 @@ void ChannelStrip::applyToggleStyle(QPushButton* btn, const QColor& activeColor)
                 "QPushButton:checked { background: %4; color: #000; }")
             .arg(theme.surface.name(), theme.textDim.name(),
                  theme.border.name(), activeColor.name()));
+}
+
+void ChannelStrip::updateSelectionStyle()
+{
+    auto& theme = ThemeManager::instance().current();
+    const QColor selectedBg = theme.meterGreen.darker(360);
+    QPalette pal = palette();
+    if (selected_) {
+        pal.setColor(QPalette::Window, selectedBg);
+        setStyleSheet(
+            QString("background: %1; "
+                    "border-left: 3px solid %2; "
+                    "border-top: 1px solid %3; "
+                    "border-right: 1px solid %3; "
+                    "border-bottom: 1px solid %3;")
+                .arg(selectedBg.name(), theme.meterGreen.name(),
+                     theme.border.lighter(115).name()));
+    } else {
+        pal.setColor(QPalette::Window, theme.surface);
+        setStyleSheet(
+            QString("background: %1; "
+                    "border: 1px solid transparent;")
+                .arg(theme.surface.name()));
+    }
+    setPalette(pal);
 }
 
 } // namespace freedaw

@@ -417,6 +417,7 @@ void EditManager::ensureLevelMetersOnAllTracks()
 {
     if (!edit_)
         return;
+
     for (auto* track : te::getAudioTracks(*edit_)) {
         bool hasLevelMeter = false;
         for (auto* plugin : track->pluginList.getPlugins()) {
@@ -430,6 +431,20 @@ void EditManager::ensureLevelMetersOnAllTracks()
                     juce::String(te::LevelMeterPlugin::xmlTypeName), {}))
                 track->pluginList.insertPlugin(p, -1, nullptr);
         }
+    }
+
+    bool hasMasterLevelMeter = false;
+    for (auto* plugin : edit_->getMasterPluginList().getPlugins()) {
+        if (dynamic_cast<te::LevelMeterPlugin*>(plugin)) {
+            hasMasterLevelMeter = true;
+            break;
+        }
+    }
+
+    if (!hasMasterLevelMeter) {
+        if (auto p = edit_->getPluginCache().createNewPlugin(
+                juce::String(te::LevelMeterPlugin::xmlTypeName), {}))
+            edit_->getMasterPluginList().insertPlugin(p, -1, nullptr);
     }
 }
 

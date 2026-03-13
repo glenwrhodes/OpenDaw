@@ -1,8 +1,20 @@
 #include "MixerView.h"
 #include "utils/ThemeManager.h"
 #include <QFrame>
+#include <QMouseEvent>
 
 namespace freedaw {
+namespace {
+ChannelStrip* findParentStrip(QWidget* w)
+{
+    while (w) {
+        if (auto* strip = qobject_cast<ChannelStrip*>(w))
+            return strip;
+        w = w->parentWidget();
+    }
+    return nullptr;
+}
+}
 
 MixerView::MixerView(EditManager* editMgr, QWidget* parent)
     : QWidget(parent), editMgr_(editMgr)
@@ -37,6 +49,8 @@ MixerView::MixerView(EditManager* editMgr, QWidget* parent)
     stripLayout_->setContentsMargins(4, 4, 4, 4);
     stripLayout_->setSpacing(2);
     stripLayout_->setAlignment(Qt::AlignLeft);
+    stripContainer_->installEventFilter(this);
+    scrollArea_->viewport()->installEventFilter(this);
 
     scrollArea_->setWidget(stripContainer_);
     mainLayout->addWidget(scrollArea_, 1);
@@ -73,15 +87,58 @@ void MixerView::rebuildStrips()
     strips_.clear();
 
     auto tracks = editMgr_->getAudioTracks();
+    bool selectedTrackStillExists = false;
+    for (auto* track : tracks) {
+        if (track == selectedTrack_) {
+            selectedTrackStillExists = true;
+            break;
+        }
+    }
+    if (!selectedTrackStillExists)
+        selectedTrack_ = nullptr;
+
     for (auto* track : tracks) {
         auto* strip = new ChannelStrip(track, editMgr_, stripContainer_);
         connect(strip, &ChannelStrip::effectInsertRequested,
                 this, &MixerView::effectInsertRequested);
         connect(strip, &ChannelStrip::instrumentSelectRequested,
                 this, &MixerView::instrumentSelectRequested);
+        strip->setSelected(track == selectedTrack_);
         stripLayout_->addWidget(strip);
         strips_.push_back(strip);
     }
+}
+
+void MixerView::setSelectedTrack(te::AudioTrack* track)
+{
+    selectedTrack_ = track;
+    for (auto* strip : strips_)
+        strip->setSelected(strip->track() == selectedTrack_);
+}
+
+bool MixerView::eventFilter(QObject* watched, QEvent* event)
+{
+    if ((watched == stripContainer_ || watched == scrollArea_->viewport())
+        && event->type() == QEvent::MouseButtonPress) {
+        auto* mouseEvent = static_cast<QMouseEvent*>(event);
+        if (mouseEvent->button() != Qt::LeftButton)
+            return QWidget::eventFilter(watched, event);
+
+        QPoint containerPos = mouseEvent->pos();
+        if (watched == scrollArea_->viewport())
+            containerPos = stripContainer_->mapFrom(scrollArea_->viewport(), mouseEvent->pos());
+
+        auto* clickedWidget = stripContainer_->childAt(containerPos);
+        auto* clickedStrip = findParentStrip(clickedWidget);
+
+        if (clickedStrip && clickedStrip->track()) {
+            emit trackSelected(clickedStrip->track());
+        } else {
+            emit trackSelected(nullptr);
+        }
+    }
+
+    return QWidget::eventFilter(watched, event);
 }
 
 } // namespace freedaw

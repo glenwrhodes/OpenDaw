@@ -24,6 +24,8 @@ TrackHeaderWidget::TrackHeaderWidget(te::AudioTrack* track, EditManager* editMgr
     : QWidget(parent), track_(track), editMgr_(editMgr)
 {
     setAccessibleName("Track Header");
+    setObjectName("trackHeaderWidget");
+    setAttribute(Qt::WA_StyledBackground, true);
     auto& theme = ThemeManager::instance().current();
 
     setFixedWidth(140);
@@ -225,12 +227,21 @@ void TrackHeaderWidget::setSelected(bool sel)
 void TrackHeaderWidget::updateSelectionStyle()
 {
     auto& theme = ThemeManager::instance().current();
+    const QColor selectedBg = theme.meterGreen.darker(360);
     if (selected_) {
-        setStyleSheet(
-            QString("TrackHeaderWidget { border-left: 3px solid %1; background: %2; }")
-                .arg(theme.soloButton.name(), theme.surfaceLight.name()));
+        setStyleSheet(QString(
+            "background: %1; "
+            "border-left: 3px solid %2; "
+            "border-top: 1px solid %3; "
+            "border-right: 1px solid %3; "
+            "border-bottom: 1px solid %3;")
+                .arg(selectedBg.name(), theme.meterGreen.name(),
+                     theme.border.lighter(115).name()));
     } else {
-        setStyleSheet(QString());
+        setStyleSheet(QString(
+            "background: %1; "
+            "border: 1px solid transparent;")
+                .arg(theme.surface.name()));
         QPalette pal;
         pal.setColor(QPalette::Window, theme.surface);
         setPalette(pal);

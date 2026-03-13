@@ -75,6 +75,7 @@ public slots:
     void onTransportPositionChanged();
     void splitSelectedClipsAtPlayhead();
     void deleteSelectedClips();
+    void setSelectedTrack(te::AudioTrack* track);
 
 private:
     bool eventFilter(QObject* watched, QEvent* event) override;
@@ -110,6 +111,7 @@ private:
     std::vector<QGraphicsRectItem*> trackBgItems_;
     std::vector<QGraphicsLineItem*> gridLineItems_;
     std::vector<TrackHeaderWidget*> trackHeaders_;
+    te::AudioTrack* selectedTrack_ = nullptr;
 
     static constexpr int HEADER_WIDTH = 140;
 };

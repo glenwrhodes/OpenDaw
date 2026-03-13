@@ -44,8 +44,11 @@ MainWindow::MainWindow(FreeDawApplication& app, QWidget* parent)
 
     connect(timelineView_, &TimelineView::trackSelected,
             this, [this](te::AudioTrack* track) {
-                if (track && effectChain_) {
+                if (effectChain_) {
                     effectChain_->setTrack(track);
+                }
+                if (mixerView_) {
+                    mixerView_->setSelectedTrack(track);
                 }
             });
 
@@ -235,6 +238,14 @@ void MainWindow::createDocks()
 
     connect(mixerView_, &MixerView::instrumentSelectRequested,
             this, &MainWindow::onInstrumentSelectRequested);
+
+    connect(mixerView_, &MixerView::trackSelected,
+            this, [this](te::AudioTrack* track) {
+                if (timelineView_)
+                    timelineView_->setSelectedTrack(track);
+                if (effectChain_)
+                    effectChain_->setTrack(track);
+            });
 
     // Piano Roll dock (bottom, tabbed with mixer)
     pianoRollDock_ = new QDockWidget("Piano Roll", this);
