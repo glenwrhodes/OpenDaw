@@ -16,6 +16,10 @@
 Built with **Qt 6** for the UI and **Tracktion Engine** (JUCE) for the audio backend.
 Audio and MIDI tracks, a built-in piano roll, VST3 instrument support, 8 built-in effects, and more — all free and open source.
 
+<br>
+
+<img src="resources/splash.png" alt="FreeDaw splash screen" width="600">
+
 </div>
 
 ---
@@ -331,6 +335,8 @@ AudioMixer/
   README.md                               This file
   LICENSE                                 GPLv3 license
   CONTRIBUTING.md                         Contribution guidelines
+  resources/
+    splash.png                            Splash screen artwork
   libs/
     JUCE/                                 JUCE framework (git submodule)
     tracktion_engine/                     Tracktion Engine (git submodule)
@@ -345,6 +351,7 @@ AudioMixer/
       PluginScanner.h/cpp                 VST3 plugin scanning and cache
     ui/
       MainWindow.h/cpp                    Main window with menus, docks, toolbar
+        SplashScreen.h/cpp                Borderless splash screen (click to dismiss)
       timeline/
         TimelineView.h/cpp                Arrangement view with track headers
         TimeRuler.h/cpp                   Beat/bar ruler with click and drag

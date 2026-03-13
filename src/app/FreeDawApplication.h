@@ -24,6 +24,7 @@ public:
     AudioEngine&  audioEngine()  { return *audioEngine_; }
     EditManager&  editManager()  { return *editManager_; }
     PluginScanner& pluginScanner() { return *pluginScanner_; }
+    MainWindow*   mainWindow()   { return mainWindow_.get(); }
 
 private:
     std::unique_ptr<JuceQtBridge>   bridge_;

@@ -1,8 +1,11 @@
 #include <QApplication>
 #include <QFile>
 #include <QDateTime>
+#include <QTimer>
 #include <juce_events/juce_events.h>
 #include "app/FreeDawApplication.h"
+#include "ui/MainWindow.h"
+#include "ui/SplashScreen.h"
 
 static QFile* logFile = nullptr;
 
@@ -27,7 +30,7 @@ int main(int argc, char* argv[])
 {
     QApplication qtApp(argc, argv);
     qtApp.setApplicationName("FreeDaw");
-    qtApp.setApplicationVersion("0.1.0");
+    qtApp.setApplicationVersion("1.0.0");
     qtApp.setOrganizationName("FreeDaw");
 
     QFile lf(QApplication::applicationDirPath() + "/freedaw.log");
@@ -36,6 +39,10 @@ int main(int argc, char* argv[])
         qInstallMessageHandler(logMessageHandler);
     }
 
+    auto* splash = new freedaw::SplashScreen();
+    splash->show();
+    qtApp.processEvents();
+
     juce::ScopedJuceInitialiser_GUI juceInit;
 
     freedaw::FreeDawApplication app;
@@ -43,5 +50,14 @@ int main(int argc, char* argv[])
         return 1;
 
     app.showMainWindow();
+
+    splash->finish();
+    splash->update();
+
+    QObject::connect(splash, &freedaw::SplashScreen::dismissed, splash, [&]() {
+        app.mainWindow()->raise();
+        app.mainWindow()->activateWindow();
+    });
+
     return qtApp.exec();
 }
