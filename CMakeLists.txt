@@ -66,7 +66,7 @@ juce_add_gui_app(FreeDaw
 juce_generate_juce_header(FreeDaw)
 
 target_sources(FreeDaw PRIVATE ${FREEDAW_SOURCES})
-qt_add_resources(FreeDaw "freedaw_resources" PREFIX "/" FILES resources/splash.png)
+qt_add_resources(FreeDaw "freedaw_resources" PREFIX "/" BASE resources FILES resources/splash.png)
 target_include_directories(FreeDaw PRIVATE src)
 
 target_compile_definitions(FreeDaw PRIVATE
