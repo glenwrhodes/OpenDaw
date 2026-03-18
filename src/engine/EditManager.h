@@ -144,7 +144,12 @@ private:
     juce::File currentFile_;
     std::unordered_set<uint64_t> midiTrackIds_;
     std::map<std::string, QString> inputDisplayNames_;
-    std::map<uint64_t, juce::File> frozenTracks_;
+    struct FreezeState {
+        juce::File freezeFile;
+        std::vector<te::EditItemID> mutedClipIds;
+        std::vector<int> disabledPluginIndices;
+    };
+    std::map<uint64_t, FreezeState> frozenTracks_;
 };
 
 } // namespace freedaw

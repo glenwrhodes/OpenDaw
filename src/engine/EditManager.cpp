@@ -1027,11 +1027,36 @@ void EditManager::freezeTrack(te::AudioTrack& track)
         return;
     }
 
-    frozenTracks_[track.itemID.getRawID()] = freezeFile;
-    qDebug() << "[freezeTrack] SUCCESS - track marked frozen, file size:"
+    FreezeState state;
+    state.freezeFile = freezeFile;
+
+    for (auto* clip : track.getClips()) {
+        if (!clip->isMuted()) {
+            state.mutedClipIds.push_back(clip->itemID);
+            clip->setMuted(true);
+        }
+    }
+    qDebug() << "[freezeTrack] muted" << state.mutedClipIds.size() << "clips";
+
+    for (int i = 0; i < track.pluginList.size(); ++i) {
+        auto* plugin = track.pluginList[i];
+        if (dynamic_cast<te::VolumeAndPanPlugin*>(plugin)) continue;
+        if (dynamic_cast<te::LevelMeterPlugin*>(plugin)) continue;
+        if (plugin->isEnabled()) {
+            state.disabledPluginIndices.push_back(i);
+            plugin->setEnabled(false);
+        }
+    }
+    qDebug() << "[freezeTrack] disabled" << state.disabledPluginIndices.size() << "plugins";
+
+    addAudioClipToTrack(track, freezeFile, 0.0);
+
+    frozenTracks_[track.itemID.getRawID()] = std::move(state);
+    qDebug() << "[freezeTrack] SUCCESS - track frozen with playback swap, file size:"
              << freezeFile.getSize();
 
     emit trackFreezeStateChanged(&track);
+    emit tracksChanged();
     emit editChanged();
 }
 
@@ -1042,16 +1067,40 @@ void EditManager::unfreezeTrack(te::AudioTrack& track)
     auto it = frozenTracks_.find(track.itemID.getRawID());
     if (it == frozenTracks_.end()) return;
 
-    auto freezeFile = it->second;
+    auto state = std::move(it->second);
     frozenTracks_.erase(it);
 
-    if (freezeFile.existsAsFile())
-        freezeFile.deleteFile();
+    for (auto* clip : track.getClips()) {
+        if (clip->getCurrentSourceFile() == state.freezeFile) {
+            clip->removeFromParent();
+            break;
+        }
+    }
+
+    for (auto* clip : track.getClips()) {
+        for (auto& id : state.mutedClipIds) {
+            if (clip->itemID == id) {
+                clip->setMuted(false);
+                break;
+            }
+        }
+    }
+    qDebug() << "[unfreezeTrack] unmuted" << state.mutedClipIds.size() << "clips";
+
+    for (int idx : state.disabledPluginIndices) {
+        if (idx < track.pluginList.size())
+            track.pluginList[idx]->setEnabled(true);
+    }
+    qDebug() << "[unfreezeTrack] re-enabled" << state.disabledPluginIndices.size() << "plugins";
+
+    if (state.freezeFile.existsAsFile())
+        state.freezeFile.deleteFile();
 
     qDebug() << "[unfreezeTrack] track unfrozen:"
              << QString::fromStdString(track.getName().toStdString());
 
     emit trackFreezeStateChanged(&track);
+    emit tracksChanged();
     emit editChanged();
 }
 
