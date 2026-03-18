@@ -76,6 +76,8 @@ MixerView::MixerView(EditManager* editMgr, QWidget* parent)
             this, &MixerView::rebuildStrips);
     connect(editMgr_, &EditManager::routingChanged,
             this, &MixerView::rebuildStrips, Qt::QueuedConnection);
+    connect(editMgr_, &EditManager::editChanged,
+            this, &MixerView::refreshStrips);
 
     rebuildStrips();
 }
@@ -109,6 +111,12 @@ void MixerView::rebuildStrips()
         stripLayout_->addWidget(strip);
         strips_.push_back(strip);
     }
+}
+
+void MixerView::refreshStrips()
+{
+    for (auto* strip : strips_)
+        strip->refresh();
 }
 
 void MixerView::setSelectedTrack(te::AudioTrack* track)

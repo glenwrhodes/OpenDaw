@@ -59,10 +59,23 @@ MainWindow::MainWindow(FreeDawApplication& app, QWidget* parent)
                     pianoRoll_->setClip(nullptr);
             });
 
+    setCorner(Qt::TopRightCorner, Qt::RightDockWidgetArea);
+    setCorner(Qt::BottomRightCorner, Qt::RightDockWidgetArea);
+
     createDocks();
     createMenus();
     createToolBar();
     createStatusBar();
+
+    aiQuickPrompt_ = new AiQuickPrompt(this);
+    connect(aiQuickPrompt_, &AiQuickPrompt::promptSubmitted,
+            this, [this](const QString& text) {
+                if (aiChatWidget_) {
+                    aiChatWidget_->submitPrompt(text);
+                    aiDock_->setVisible(true);
+                    aiDock_->raise();
+                }
+            });
 }
 
 MainWindow::~MainWindow() = default;
@@ -165,6 +178,11 @@ void MainWindow::createMenus()
         &MainWindow::onRemoveTrack);
 
     editMenu->addSeparator();
+    editMenu->addAction("AI &Preferences...", this, [this]() {
+        if (aiChatWidget_)
+            aiChatWidget_->openSettings();
+    });
+    editMenu->addSeparator();
     editMenu->addAction("Scan &VST Plugins...", this,
         &MainWindow::onScanVstPlugins);
 
@@ -199,6 +217,21 @@ void MainWindow::createMenus()
         routingDock_->setVisible(!routingDock_->isVisible());
         if (routingDock_->isVisible()) routingDock_->raise();
     });
+    viewMenu->addAction("Toggle &AI Assistant", this, [this]() {
+        aiDock_->setVisible(!aiDock_->isVisible());
+        if (aiDock_->isVisible()) {
+            aiDock_->raise();
+            aiChatWidget_->focusInput();
+        }
+    });
+    viewMenu->addSeparator();
+    auto* quickPromptAction = viewMenu->addAction("AI &Quick Prompt",
+        QKeySequence("Ctrl+Space"), this, [this]() {
+            if (aiQuickPrompt_)
+                aiQuickPrompt_->showCentered();
+        });
+    quickPromptAction->setShortcutContext(Qt::WindowShortcut);
+    addAction(quickPromptAction);
 
     // Transport menu
     auto* transportMenu = menuBar->addMenu("&Transport");
@@ -363,6 +396,12 @@ void MainWindow::createToolBar()
         routingToggle->setToolTip("Toggle Routing");
         mainToolBar_->addAction(routingToggle);
     }
+    if (aiDock_) {
+        auto* aiToggle = aiDock_->toggleViewAction();
+        aiToggle->setIcon(miIcon(icons::mi::Chat));
+        aiToggle->setToolTip("Toggle AI Assistant");
+        mainToolBar_->addAction(aiToggle);
+    }
 }
 
 void MainWindow::createDocks()
@@ -467,7 +506,16 @@ void MainWindow::createDocks()
     effectsDock_->setWidget(effectChain_);
     addDockWidget(Qt::RightDockWidgetArea, effectsDock_);
 
+    // AI assistant dock (right, tabbed with browser and effects)
+    aiDock_ = new QDockWidget("AI", this);
+    aiDock_->setAccessibleName("AI Assistant Dock");
+    aiChatWidget_ = new AiChatWidget(&editMgr_, &app_.audioEngine(),
+                                     &app_.pluginScanner(), aiDock_);
+    aiDock_->setWidget(aiChatWidget_);
+    addDockWidget(Qt::RightDockWidgetArea, aiDock_);
+
     tabifyDockWidget(browserDock_, effectsDock_);
+    tabifyDockWidget(effectsDock_, aiDock_);
     browserDock_->raise();
 }
 

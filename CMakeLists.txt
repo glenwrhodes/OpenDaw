@@ -7,7 +7,7 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 # ── Qt6 ──────────────────────────────────────────────────────────────────────
 set(CMAKE_PREFIX_PATH "c:/qt/6.10.2/msvc2022_64" CACHE STRING "Qt prefix path")
-find_package(Qt6 REQUIRED COMPONENTS Widgets)
+find_package(Qt6 REQUIRED COMPONENTS Widgets Network)
 qt_standard_project_setup()
 
 # ── JUCE ─────────────────────────────────────────────────────────────────────
@@ -58,6 +58,12 @@ set(FREEDAW_SOURCES
     src/utils/WaveformCache.h       src/utils/WaveformCache.cpp
     src/utils/ThemeManager.h        src/utils/ThemeManager.cpp
     src/utils/IconFont.h
+    src/ai/AiTypes.h
+    src/ai/AiToolDefs.h            src/ai/AiToolDefs.cpp
+    src/ai/AiToolExecutor.h        src/ai/AiToolExecutor.cpp
+    src/ai/AiService.h             src/ai/AiService.cpp
+    src/ai/AiChatWidget.h          src/ai/AiChatWidget.cpp
+    src/ai/AiQuickPrompt.h         src/ai/AiQuickPrompt.cpp
 )
 
 # ── Create the FreeDaw JUCE GUI App target ───────────────────────────────────
@@ -89,6 +95,7 @@ target_compile_definitions(FreeDaw PRIVATE
 
 target_link_libraries(FreeDaw PRIVATE
     Qt6::Widgets
+    Qt6::Network
     tracktion::tracktion_core
     tracktion::tracktion_engine
     tracktion::tracktion_graph

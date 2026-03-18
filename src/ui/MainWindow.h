@@ -7,6 +7,8 @@
 #include "ui/effects/EffectChainWidget.h"
 #include "ui/browser/FileBrowserPanel.h"
 #include "ui/routing/RoutingView.h"
+#include "ai/AiChatWidget.h"
+#include "ai/AiQuickPrompt.h"
 #include <QMainWindow>
 #include <QDockWidget>
 #include <QMenuBar>
@@ -55,12 +57,15 @@ private:
     FileBrowserPanel*  fileBrowser_   = nullptr;
     PianoRollEditor*   pianoRoll_     = nullptr;
     RoutingView*       routingView_   = nullptr;
+    AiChatWidget*      aiChatWidget_  = nullptr;
+    AiQuickPrompt*     aiQuickPrompt_ = nullptr;
 
     QDockWidget* mixerDock_           = nullptr;
     QDockWidget* effectsDock_         = nullptr;
     QDockWidget* browserDock_         = nullptr;
     QDockWidget* pianoRollDock_       = nullptr;
     QDockWidget* routingDock_         = nullptr;
+    QDockWidget* aiDock_              = nullptr;
 
     QToolBar* transportToolBar_       = nullptr;
     QToolBar* mainToolBar_            = nullptr;

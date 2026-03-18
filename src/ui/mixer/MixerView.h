@@ -20,6 +20,7 @@ public:
 
 public slots:
     void rebuildStrips();
+    void refreshStrips();
     void setSelectedTrack(te::AudioTrack* track);
 
 signals:

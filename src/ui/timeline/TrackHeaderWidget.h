@@ -27,6 +27,7 @@ public:
     te::AudioTrack* track() const { return track_; }
     void setTrackHeight(int h);
     void setSelected(bool sel);
+    void refresh();
     bool isSelected() const { return selected_; }
     QSize minimumSizeHint() const override;
 

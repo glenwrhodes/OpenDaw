@@ -433,6 +433,8 @@ void TimelineView::onEditChanged()
                        editMgr_->getTimeSigDenominator());
     qDebug() << "[TimelineView] about to rebuildClips";
     rebuildClips();
+    for (auto* header : trackHeaders_)
+        header->refresh();
     qDebug() << "[TimelineView] onEditChanged done";
 }
 

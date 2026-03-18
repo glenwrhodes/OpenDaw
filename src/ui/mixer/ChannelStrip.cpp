@@ -327,10 +327,32 @@ void ChannelStrip::setSelected(bool selected)
 
 void ChannelStrip::refresh()
 {
+    if (isMaster_) {
+        if (editMgr_ && editMgr_->edit()) {
+            if (auto masterVol = editMgr_->edit()->getMasterVolumePlugin()) {
+                if (fader_) {
+                    QSignalBlocker block(fader_);
+                    fader_->setValue(masterVol->getSliderPos());
+                }
+                if (panKnob_) {
+                    QSignalBlocker block(panKnob_);
+                    panKnob_->setValue(masterVol->getPan());
+                }
+            }
+        }
+        return;
+    }
+
     if (!track_) return;
     nameLabel_->setText(QString::fromStdString(track_->getName().toStdString()));
-    muteBtn_->setChecked(track_->isMuted(false));
-    soloBtn_->setChecked(track_->isSolo(false));
+    {
+        QSignalBlocker block(muteBtn_);
+        muteBtn_->setChecked(track_->isMuted(false));
+    }
+    {
+        QSignalBlocker block(soloBtn_);
+        soloBtn_->setChecked(track_->isSolo(false));
+    }
     if (editMgr_ && monoBtn_) {
         const bool mono = editMgr_->isTrackMono(track_);
         QSignalBlocker block(monoBtn_);
@@ -341,6 +363,23 @@ void ChannelStrip::refresh()
         QSignalBlocker block(armBtn_);
         armBtn_->setChecked(editMgr_->isTrackRecordEnabled(track_));
     }
+
+    for (auto* plugin : track_->pluginList.getPlugins()) {
+        if (auto* vp = dynamic_cast<te::VolumeAndPanPlugin*>(plugin)) {
+            if (fader_) {
+                float dbVal = te::volumeFaderPositionToDB(vp->volParam->getCurrentValue());
+                double norm = (dbVal + 60.0) / 66.0;
+                QSignalBlocker block(fader_);
+                fader_->setValue(norm);
+            }
+            if (panKnob_) {
+                QSignalBlocker block(panKnob_);
+                panKnob_->setValue(vp->pan.get());
+            }
+            break;
+        }
+    }
+
     if (editMgr_ && inputCombo_)
         populateInputCombo();
     if (editMgr_ && outputCombo_)

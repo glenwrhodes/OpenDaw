@@ -299,6 +299,46 @@ TrackHeaderWidget::~TrackHeaderWidget()
         levelMeterPlugin_->measurer.removeClient(meterClient_);
 }
 
+void TrackHeaderWidget::refresh()
+{
+    if (!track_) return;
+    nameLabel_->setText(QString::fromStdString(track_->getName().toStdString()));
+    {
+        QSignalBlocker block(muteBtn_);
+        muteBtn_->setChecked(track_->isMuted(false));
+    }
+    {
+        QSignalBlocker block(soloBtn_);
+        soloBtn_->setChecked(track_->isSolo(false));
+    }
+    if (editMgr_ && armBtn_) {
+        QSignalBlocker block(armBtn_);
+        armBtn_->setChecked(editMgr_->isTrackRecordEnabled(track_));
+    }
+    if (editMgr_ && monoBtn_) {
+        QSignalBlocker block(monoBtn_);
+        bool mono = editMgr_->isTrackMono(track_);
+        monoBtn_->setChecked(mono);
+        updateMonoButtonVisual(mono);
+    }
+
+    for (auto* plugin : track_->pluginList.getPlugins()) {
+        if (auto* vp = dynamic_cast<te::VolumeAndPanPlugin*>(plugin)) {
+            if (volumeSlider_) {
+                float dbVal = te::volumeFaderPositionToDB(vp->volParam->getCurrentValue());
+                double norm = (dbVal + 60.0) / 66.0;
+                QSignalBlocker block(volumeSlider_);
+                volumeSlider_->setValue(static_cast<int>(norm * 100.0));
+            }
+            if (panKnob_) {
+                QSignalBlocker block(panKnob_);
+                panKnob_->setValue(vp->pan.get());
+            }
+            break;
+        }
+    }
+}
+
 void TrackHeaderWidget::setTrackHeight(int h)
 {
     int minH = minimumSizeHint().height();
