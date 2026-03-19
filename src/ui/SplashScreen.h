@@ -2,6 +2,7 @@
 
 #include <QWidget>
 #include <QPixmap>
+#include <QString>
 
 namespace freedaw {
 
@@ -9,7 +10,7 @@ class SplashScreen : public QWidget {
     Q_OBJECT
 
 public:
-    explicit SplashScreen(QWidget* parent = nullptr);
+    explicit SplashScreen(bool deleteOnClose = true, QWidget* parent = nullptr);
 
     void finish();
 

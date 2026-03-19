@@ -3,6 +3,7 @@
 #include "ui/effects/PluginEditorWindow.h"
 #include "ui/pianoroll/PianoRollEditor.h"
 #include "ui/dialogs/ExportDialog.h"
+#include "ui/SplashScreen.h"
 #include "utils/ThemeManager.h"
 #include "utils/IconFont.h"
 #include <QFileDialog>
@@ -287,6 +288,15 @@ void MainWindow::createMenus()
 
     transportMenu->addAction("&Record", QKeySequence("R"), this, [this]() {
         editMgr_.transport().record(false);
+    });
+
+    // Help menu
+    auto* helpMenu = menuBar->addMenu("&Help");
+    helpMenu->addAction("&About FreeDaw", this, [this]() {
+        auto* about = new SplashScreen(false, this);
+        about->setAttribute(Qt::WA_DeleteOnClose);
+        about->finish();
+        about->show();
     });
 }
 

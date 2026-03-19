@@ -119,6 +119,26 @@ if(MSVC)
     target_compile_options(FreeDaw PRIVATE /EHsc /bigobj)
 endif()
 
+# ── Version from git tag ─────────────────────────────────────────────────────
+find_package(Git QUIET)
+if(GIT_FOUND)
+    execute_process(
+        COMMAND ${GIT_EXECUTABLE} describe --tags --always
+        WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+        OUTPUT_VARIABLE FREEDAW_GIT_VERSION
+        OUTPUT_STRIP_TRAILING_WHITESPACE
+        ERROR_QUIET
+        RESULT_VARIABLE GIT_DESCRIBE_RESULT)
+    if(NOT GIT_DESCRIBE_RESULT EQUAL 0)
+        set(FREEDAW_GIT_VERSION "dev")
+    endif()
+else()
+    set(FREEDAW_GIT_VERSION "dev")
+endif()
+message(STATUS "FreeDaw version: ${FREEDAW_GIT_VERSION}")
+target_compile_definitions(FreeDaw PRIVATE
+    FREEDAW_VERSION="${FREEDAW_GIT_VERSION}")
+
 if(WIN32)
     target_link_libraries(FreeDaw PRIVATE winmm)
 endif()

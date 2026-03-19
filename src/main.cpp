@@ -8,6 +8,10 @@
 #include "ui/SplashScreen.h"
 #include "utils/IconFont.h"
 
+#ifndef FREEDAW_VERSION
+#define FREEDAW_VERSION "dev"
+#endif
+
 static QFile* logFile = nullptr;
 
 void logMessageHandler(QtMsgType type, const QMessageLogContext&, const QString& msg)
@@ -31,7 +35,7 @@ int main(int argc, char* argv[])
 {
     QApplication qtApp(argc, argv);
     qtApp.setApplicationName("FreeDaw");
-    qtApp.setApplicationVersion("1.0.0");
+    qtApp.setApplicationVersion(FREEDAW_VERSION);
     qtApp.setOrganizationName("FreeDaw");
 
     QFile lf(QApplication::applicationDirPath() + "/freedaw.log");

@@ -6,15 +6,20 @@
 #include <QFont>
 #include <QDebug>
 
+#ifndef FREEDAW_VERSION
+#define FREEDAW_VERSION "dev"
+#endif
+
 namespace freedaw {
 
 static constexpr int kSplashWidth  = 800;
 static constexpr int kSplashHeight = 450;
 
-SplashScreen::SplashScreen(QWidget* parent)
+SplashScreen::SplashScreen(bool deleteOnClose, QWidget* parent)
     : QWidget(parent, Qt::FramelessWindowHint | Qt::WindowStaysOnTopHint | Qt::SplashScreen)
 {
-    setAttribute(Qt::WA_DeleteOnClose);
+    if (deleteOnClose)
+        setAttribute(Qt::WA_DeleteOnClose);
     setCursor(Qt::PointingHandCursor);
 
     QPixmap raw(":/splash.png");
@@ -51,14 +56,13 @@ void SplashScreen::paintEvent(QPaintEvent*)
 
     p.drawPixmap(0, 0, background_);
 
-    // Dark gradient overlay on bottom quarter for text legibility
     int textZoneY = height() * 3 / 4;
-    QLinearGradient fade(0, textZoneY - 30, 0, textZoneY + 10);
+    QLinearGradient fade(0, textZoneY - 60, 0, textZoneY + 10);
     fade.setColorAt(0.0, QColor(10, 10, 15, 0));
     fade.setColorAt(1.0, QColor(10, 10, 15, 220));
-    p.fillRect(0, textZoneY - 30, width(), height() - textZoneY + 30, fade);
+    p.fillRect(0, textZoneY - 60, width(), height() - textZoneY + 60, fade);
 
-    int textAreaTop = textZoneY - 4;
+    int textAreaTop = textZoneY - 30;
 
     QFont titleFont("Segoe UI", 26, QFont::Bold);
     p.setFont(titleFont);
@@ -68,14 +72,21 @@ void SplashScreen::paintEvent(QPaintEvent*)
     QFont versionFont("Segoe UI", 11);
     p.setFont(versionFont);
     p.setPen(QColor(100, 210, 210));
-    p.drawText(QRect(0, textAreaTop + 36, width(), 20), Qt::AlignCenter, "Version 1.0");
+    QString versionStr = QString("Version %1").arg(FREEDAW_VERSION);
+    p.drawText(QRect(0, textAreaTop + 36, width(), 20), Qt::AlignCenter, versionStr);
+
+    QFont devFont("Segoe UI", 9);
+    p.setFont(devFont);
+    p.setPen(QColor(190, 190, 190));
+    p.drawText(QRect(0, textAreaTop + 58, width(), 18), Qt::AlignCenter,
+               "Developed by Glen Rhodes");
 
     QFont smallFont("Segoe UI", 8);
     p.setFont(smallFont);
-    p.setPen(QColor(160, 160, 160));
+    p.setPen(QColor(140, 140, 140));
     QString copyright = QString::fromUtf8(
-        "\u00A9 2025\u20132026 FreeDaw contributors  \u2022  Licensed under GPLv3");
-    p.drawText(QRect(0, textAreaTop + 58, width(), 16), Qt::AlignCenter, copyright);
+        "\u00A9 2025\u20132026 FreeDaw  \u2022  Licensed under GPLv3");
+    p.drawText(QRect(0, textAreaTop + 78, width(), 16), Qt::AlignCenter, copyright);
 
     if (!ready_) {
         QFont loadFont("Segoe UI", 8, QFont::Normal, true);
