@@ -11,10 +11,7 @@ PluginEditorWindow::PluginEditorWindow(te::ExternalPlugin& plugin)
       plugin_(plugin)
 {
     setUsingNativeTitleBar(true);
-
-    constrainer_.setMinimumOnscreenAmounts(40, 30, 40, 40);
-    setConstrainer(&constrainer_);
-    setResizable(true, true);
+    setResizable(true, false);
 
     if (auto* instance = plugin.getAudioPluginInstance()) {
         if (auto* editor = instance->createEditorIfNeeded()) {
@@ -22,16 +19,9 @@ PluginEditorWindow::PluginEditorWindow(te::ExternalPlugin& plugin)
         }
     }
 
-    setTopLeftPosition(0, 0);
+    centreWithSize(getWidth(), getHeight());
     setVisible(true);
     toFront(true);
-}
-
-void PluginEditorWindow::moved()
-{
-    auto pos = getPosition();
-    if (pos.y < 0)
-        setTopLeftPosition(pos.x, 0);
 }
 
 PluginEditorWindow::~PluginEditorWindow()
@@ -58,6 +48,8 @@ void PluginEditorWindow::showForPlugin(te::ExternalPlugin& plugin)
             return;
         }
     }
+
+    juce::ScopedDPIAwarenessDisabler dpiDisabler;
     openWindows_.push_back(std::make_unique<PluginEditorWindow>(plugin));
 }
 
