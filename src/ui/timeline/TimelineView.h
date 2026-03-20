@@ -163,6 +163,9 @@ private:
     void cleanupAutomationItems();
     void rebuildAutomationLanes(double sceneWidth);
 
+    // Track transport state for automation refresh
+    bool wasPlaying_ = false;
+
     // Lane resize
     bool laneResizing_ = false;
     int laneResizeTrackIndex_ = -1;

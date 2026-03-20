@@ -54,6 +54,14 @@ void AutomationLaneItem::setSceneWidth(double w)
     rebuildFromCurve();
 }
 
+void AutomationLaneItem::setPlayheadBeat(double beat)
+{
+    if (std::abs(playheadBeat_ - beat) > 0.001) {
+        playheadBeat_ = beat;
+        update();
+    }
+}
+
 QRectF AutomationLaneItem::boundingRect() const
 {
     return QRectF(0, 0, sceneWidth_, laneHeight_);
@@ -156,6 +164,37 @@ void AutomationLaneItem::paint(QPainter* painter, const QStyleOptionGraphicsItem
         painter->drawLine(QPointF(0, y), QPointF(r.width(), y));
     }
 
+    // Value labels on left edge
+    if (param_) {
+        QFont labelFont;
+        labelFont.setPixelSize(9);
+        painter->setFont(labelFont);
+        painter->setPen(theme.textDim);
+
+        auto paramName = param_->getParameterName();
+        bool isVolume = (paramName == "Volume" || param_->paramID == juce::String("volume"));
+        bool isPan = (paramName == "Pan" || param_->paramID == juce::String("pan"));
+
+        QString topLabel, midLabel, bottomLabel;
+        if (isVolume) {
+            topLabel = "+6 dB";
+            midLabel = "-12 dB";
+            bottomLabel = QString::fromUtf8("-\xe2\x88\x9e");
+        } else if (isPan) {
+            topLabel = "R";
+            midLabel = "C";
+            bottomLabel = "L";
+        } else {
+            topLabel = "100%";
+            midLabel = "50%";
+            bottomLabel = "0%";
+        }
+
+        painter->drawText(QPointF(3, 10), topLabel);
+        painter->drawText(QPointF(3, r.height() * 0.5 + 3), midLabel);
+        painter->drawText(QPointF(3, r.height() - 3), bottomLabel);
+    }
+
     painter->setRenderHint(QPainter::Antialiasing, true);
 
     // Draw existing curve if we have points
@@ -212,6 +251,27 @@ void AutomationLaneItem::paint(QPainter* painter, const QStyleOptionGraphicsItem
         painter->setPen(drawPen);
         for (int i = 1; i < freehandPath_.size(); ++i)
             painter->drawLine(freehandPath_[i - 1], freehandPath_[i]);
+    }
+
+    // Playback position indicator dot
+    if (param_ && playheadBeat_ >= 0.0) {
+        float minVal = param_->getValueRange().getStart();
+        float maxVal = param_->getValueRange().getEnd();
+        auto& ts = edit_->tempoSequence;
+        auto beatPos = tracktion::BeatPosition::fromBeats(playheadBeat_);
+        auto timePos = ts.toTime(beatPos);
+        auto posForLookup = te::EditPosition(timePos);
+        float val = param_->getCurve().getValueAt(posForLookup, param_->getCurrentBaseValue());
+
+        double dotX = EnvelopeUtils::beatToX(playheadBeat_, pixelsPerBeat_);
+        double dotY = EnvelopeUtils::valueToY(val, minVal, maxVal, laneHeight_);
+
+        if (dotX >= 0 && dotX <= r.width()) {
+            constexpr double kDotRadius = 4.5;
+            painter->setPen(QPen(theme.text, 1.5));
+            painter->setBrush(theme.accentLight);
+            painter->drawEllipse(QPointF(dotX, dotY), kDotRadius, kDotRadius);
+        }
     }
 }
 

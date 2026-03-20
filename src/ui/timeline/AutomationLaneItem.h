@@ -29,6 +29,7 @@ public:
     void setPixelsPerBeat(double ppb);
     void setLaneHeight(double h);
     void setSceneWidth(double w);
+    void setPlayheadBeat(double beat);
     void rebuildFromCurve();
     void updateCurvePathOnly();
 
@@ -61,6 +62,7 @@ private:
     QVector<AutomationPointItem*> pointItems_;
     QPainterPath curvePath_;
     QVector<EnvelopePoint> cachedPoints_;
+    double playheadBeat_ = -1.0;
 
     // Freehand draw state
     bool freehandDrawing_ = false;

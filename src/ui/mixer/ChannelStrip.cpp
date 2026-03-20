@@ -179,7 +179,7 @@ void ChannelStrip::setupUI()
         if (!track_) return;
         for (auto* plugin : track_->pluginList.getPlugins()) {
             if (auto* volPan = dynamic_cast<te::VolumeAndPanPlugin*>(plugin)) {
-                volPan->pan.setValue(float(v), nullptr);
+                volPan->panParam->setParameter(float(v), juce::sendNotification);
                 break;
             }
         }
@@ -292,6 +292,44 @@ void ChannelStrip::setupUI()
     if (!isMaster_)
         btnRow->addWidget(monoBtn_);
     layout->addLayout(btnRow);
+
+    // Automation mode button (Off -> Read -> Write cycle)
+    autoModeBtn_ = new QPushButton("OFF", this);
+    autoModeBtn_->setAccessibleName("Automation Mode");
+    autoModeBtn_->setToolTip("Automation: Off / Read / Write (click to cycle)");
+    autoModeBtn_->setFixedHeight(18);
+    autoModeBtn_->setStyleSheet(
+        QString("QPushButton { background: %1; color: %2; border: 1px solid %3; "
+                "border-radius: 2px; font-size: 7px; font-weight: bold; padding: 0px 2px; }"
+                "QPushButton:hover { border: 1px solid %4; }")
+            .arg(theme.surface.name(), theme.textDim.name(),
+                 theme.border.name(), theme.accent.name()));
+    connect(autoModeBtn_, &QPushButton::clicked, this, [this]() {
+        if (!editMgr_ || !editMgr_->edit() || !track_) return;
+        auto currentMode = track_->automationMode.get();
+        te::AutomationMode newMode;
+        if (currentMode == te::AutomationMode::read)
+            newMode = te::AutomationMode::write;
+        else if (currentMode == te::AutomationMode::write)
+            newMode = te::AutomationMode::latch;
+        else if (currentMode == te::AutomationMode::latch)
+            newMode = te::AutomationMode::read;
+        else
+            newMode = te::AutomationMode::read;
+        track_->automationMode = newMode;
+
+        auto& arm = editMgr_->edit()->getAutomationRecordManager();
+        if (newMode == te::AutomationMode::write || newMode == te::AutomationMode::latch) {
+            arm.setReadingAutomation(true);
+            arm.setWritingAutomation(true);
+        } else {
+            arm.setReadingAutomation(true);
+            arm.setWritingAutomation(false);
+        }
+        updateAutoModeButton();
+    });
+    layout->addWidget(autoModeBtn_);
+    updateAutoModeButton();
 
     if (track_ && editMgr_ && monoBtn_) {
         const bool mono = editMgr_->isTrackMono(track_);
@@ -432,6 +470,7 @@ void ChannelStrip::refresh()
         }
     }
     updateVolumeLabel();
+    updateAutoModeButton();
 
     if (editMgr_ && inputCombo_)
         populateInputCombo();
@@ -441,21 +480,47 @@ void ChannelStrip::refresh()
 
 void ChannelStrip::updateMeter()
 {
-    if (!editMgr_ || !editMgr_->edit() || !levelMeterPlugin_)
+    if (!editMgr_ || !editMgr_->edit())
         return;
 
-    auto levelL = meterClient_.getAndClearAudioLevel(0);
-    auto levelR = meterClient_.getAndClearAudioLevel(1);
+    if (levelMeterPlugin_) {
+        auto levelL = meterClient_.getAndClearAudioLevel(0);
+        auto levelR = meterClient_.getAndClearAudioLevel(1);
 
-    if (isMaster_) {
-        if (auto masterVol = editMgr_->edit()->getMasterVolumePlugin()) {
-            const float masterDb = masterVol->getVolumeDb();
-            levelL.dB += masterDb;
-            levelR.dB += masterDb;
+        if (isMaster_) {
+            if (auto masterVol = editMgr_->edit()->getMasterVolumePlugin()) {
+                const float masterDb = masterVol->getVolumeDb();
+                levelL.dB += masterDb;
+                levelR.dB += masterDb;
+            }
         }
+
+        meter_->setLevel(dbToNormalized(levelL.dB), dbToNormalized(levelR.dB));
     }
 
-    meter_->setLevel(dbToNormalized(levelL.dB), dbToNormalized(levelR.dB));
+    if (!track_ || isMaster_) return;
+    if (!editMgr_->transport().isPlaying()) return;
+
+    auto mode = track_->automationMode.get();
+    if (mode == te::AutomationMode::write || mode == te::AutomationMode::latch)
+        return;
+
+    for (auto* plugin : track_->pluginList.getPlugins()) {
+        if (auto* vp = dynamic_cast<te::VolumeAndPanPlugin*>(plugin)) {
+            if (fader_) {
+                float dbVal = te::volumeFaderPositionToDB(vp->volParam->getCurrentValue());
+                double norm = (dbVal + 60.0) / 66.0;
+                QSignalBlocker block(fader_);
+                fader_->setValue(std::clamp(norm, 0.0, 1.0));
+            }
+            if (panKnob_) {
+                QSignalBlocker block(panKnob_);
+                panKnob_->setValue(vp->panParam->getCurrentValue());
+            }
+            updateVolumeLabel();
+            break;
+        }
+    }
 }
 
 void ChannelStrip::reconnectLevelMeterSource()
@@ -499,6 +564,49 @@ void ChannelStrip::updateMonoButtonVisual(bool mono)
 
     monoBtn_->setText(QString(mono ? icons::fa::Mono : icons::fa::Stereo));
     monoBtn_->setToolTip(mono ? "Track is mono" : "Track is stereo");
+}
+
+void ChannelStrip::updateAutoModeButton()
+{
+    if (!autoModeBtn_) return;
+    auto& theme = ThemeManager::instance().current();
+
+    auto mode = te::AutomationMode::read;
+    if (track_)
+        mode = track_->automationMode.get();
+
+    QString text;
+    QColor bg, fg;
+    switch (mode) {
+        case te::AutomationMode::write:
+            text = "WRITE";
+            bg = theme.recordArm;
+            fg = QColor(Qt::white);
+            break;
+        case te::AutomationMode::latch:
+            text = "LATCH";
+            bg = theme.muteButton;
+            fg = QColor(Qt::white);
+            break;
+        case te::AutomationMode::touch:
+            text = "TOUCH";
+            bg = theme.soloButton.darker(130);
+            fg = QColor(Qt::white);
+            break;
+        case te::AutomationMode::read:
+        default:
+            text = "READ";
+            bg = theme.meterGreen.darker(140);
+            fg = theme.meterGreen;
+            break;
+    }
+
+    autoModeBtn_->setText(text);
+    autoModeBtn_->setStyleSheet(
+        QString("QPushButton { background: %1; color: %2; border: 1px solid %3; "
+                "border-radius: 2px; font-size: 7px; font-weight: bold; padding: 0px 2px; }"
+                "QPushButton:hover { border: 1px solid %4; }")
+            .arg(bg.name(), fg.name(), theme.border.name(), theme.accent.name()));
 }
 
 void ChannelStrip::populateInputCombo()

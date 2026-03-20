@@ -266,7 +266,7 @@ TrackHeaderWidget::TrackHeaderWidget(te::AudioTrack* track, EditManager* editMgr
         if (!track_) return;
         for (auto* plugin : track_->pluginList.getPlugins()) {
             if (auto* volPan = dynamic_cast<te::VolumeAndPanPlugin*>(plugin)) {
-                volPan->pan.setValue(float(v), nullptr);
+                volPan->panParam->setParameter(float(v), juce::sendNotification);
                 break;
             }
         }
@@ -523,12 +523,36 @@ void TrackHeaderWidget::startRenameEdit()
 
 void TrackHeaderWidget::updateMeter()
 {
-    if (!track_ || !editMgr_ || !editMgr_->edit() || !levelMeterPlugin_)
+    if (!track_ || !editMgr_ || !editMgr_->edit())
         return;
 
-    auto levelL = meterClient_.getAndClearAudioLevel(0);
-    auto levelR = meterClient_.getAndClearAudioLevel(1);
-    meter_->setLevel(dbToNormalized(levelL.dB), dbToNormalized(levelR.dB));
+    if (levelMeterPlugin_) {
+        auto levelL = meterClient_.getAndClearAudioLevel(0);
+        auto levelR = meterClient_.getAndClearAudioLevel(1);
+        meter_->setLevel(dbToNormalized(levelL.dB), dbToNormalized(levelR.dB));
+    }
+
+    if (!editMgr_->transport().isPlaying()) return;
+
+    auto mode = track_->automationMode.get();
+    if (mode == te::AutomationMode::write || mode == te::AutomationMode::latch)
+        return;
+
+    for (auto* plugin : track_->pluginList.getPlugins()) {
+        if (auto* vp = dynamic_cast<te::VolumeAndPanPlugin*>(plugin)) {
+            if (volumeSlider_) {
+                float dbVal = te::volumeFaderPositionToDB(vp->volParam->getCurrentValue());
+                double norm = (dbVal + 60.0) / 66.0;
+                QSignalBlocker block(volumeSlider_);
+                volumeSlider_->setValue(static_cast<int>(std::clamp(norm, 0.0, 1.0) * 100.0));
+            }
+            if (panKnob_) {
+                QSignalBlocker block(panKnob_);
+                panKnob_->setValue(vp->panParam->getCurrentValue());
+            }
+            break;
+        }
+    }
 }
 
 void TrackHeaderWidget::applyToggleStyle(QPushButton* btn, const QColor& activeColor)

@@ -83,6 +83,10 @@ int main(int argc, char* argv[])
     qtApp.setApplicationVersion(FREEDAW_VERSION);
     qtApp.setOrganizationName("FreeDaw");
 
+    qtApp.setStyleSheet(
+        "QToolTip { background: #3a3a3a; color: #dcdcdc; border: 1px solid #666; "
+        "padding: 3px; font-size: 11px; }");
+
     QFile lf(QApplication::applicationDirPath() + "/freedaw.log");
     if (lf.open(QIODevice::WriteOnly | QIODevice::Truncate | QIODevice::Text)) {
         logFile = &lf;

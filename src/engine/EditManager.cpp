@@ -91,6 +91,11 @@ void EditManager::createDefaultEdit()
     ensureLevelMetersOnAllTracks();
     enableAllWaveInputDevices();
     edit_->getTransport().ensureContextAllocated();
+
+    auto& arm = edit_->getAutomationRecordManager();
+    arm.setReadingAutomation(false);
+    arm.setWritingAutomation(false);
+
     currentFile_ = juce::File();
     edit_->getUndoManager().clearUndoHistory();
     hasUnsavedChanges_ = false;
@@ -141,6 +146,10 @@ bool EditManager::loadEdit(const juce::File& file)
     qDebug() << "[loadEdit] allocating playback context";
     edit_->getTransport().ensureContextAllocated();
     qDebug() << "[loadEdit] playback context ready";
+
+    auto& arm = edit_->getAutomationRecordManager();
+    arm.setReadingAutomation(false);
+    arm.setWritingAutomation(false);
 
     qDebug() << "[loadEdit] restoring disconnected outputs";
     for (auto* track : te::getAudioTracks(*edit_)) {

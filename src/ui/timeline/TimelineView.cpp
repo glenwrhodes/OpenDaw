@@ -978,7 +978,20 @@ void TimelineView::updatePlayhead()
     playheadLine_->setLine(x, 0, x, scene_->sceneRect().height());
     ruler_->setPlayheadBeat(beat);
 
-    if (editMgr_->transport().isPlaying()) {
+    bool isPlaying = editMgr_->transport().isPlaying();
+
+    for (auto* lane : automationLaneItems_)
+        lane->setPlayheadBeat(beat);
+
+    // When transport stops, refresh automation lanes to show any
+    // newly recorded automation data from the engine's punchOut
+    if (wasPlaying_ && !isPlaying) {
+        for (auto* lane : automationLaneItems_)
+            lane->rebuildFromCurve();
+    }
+    wasPlaying_ = isPlaying;
+
+    if (isPlaying) {
         graphicsView_->ensureVisible(x, graphicsView_->mapToScene(
             graphicsView_->viewport()->rect().center()).y(),
             50, 10, 50, 0);
