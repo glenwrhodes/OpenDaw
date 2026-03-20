@@ -14,14 +14,19 @@ class NoteItem : public QGraphicsRectItem {
 public:
     NoteItem(te::MidiNote* note, te::MidiClip* clip,
              double pixelsPerBeat, double noteRowHeight,
-             int lowestNote, QGraphicsItem* parent = nullptr);
+             int lowestNote, int channelNumber = 1,
+             QGraphicsItem* parent = nullptr);
 
     te::MidiNote* note() const { return note_; }
+    te::MidiClip* clip() const { return clip_; }
+    int channelNumber() const { return channelNumber_; }
     void updateGeometry(double pixelsPerBeat, double noteRowHeight,
-                        int lowestNote, int totalNotes);
+                        int lowestNote, int totalNotes,
+                        double beatOffset = 0.0);
 
     void setGridSnapper(GridSnapper* s) { snapper_ = s; }
     void setRefreshCallback(std::function<void()> cb) { refreshCb_ = std::move(cb); }
+    void setActiveChannel(bool active) { isActiveChannel_ = active; }
 
     enum { Type = QGraphicsItem::UserType + 10 };
     int type() const override { return Type; }
@@ -53,12 +58,15 @@ private:
 
     te::MidiNote* note_;
     te::MidiClip* clip_;
+    int channelNumber_ = 1;
+    bool isActiveChannel_ = true;
     GridSnapper* snapper_ = nullptr;
     std::function<void()> refreshCb_;
 
     double pixelsPerBeat_ = 60.0;
     double noteRowHeight_ = 12.0;
     int lowestNote_ = 0;
+    double beatOffset_ = 0.0;
 
     bool dragging_ = false;
     bool resizingRight_ = false;

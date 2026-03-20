@@ -131,6 +131,19 @@ public:
     };
     static QList<RecoveryInfo> findRecoveryFiles();
 
+    // Linked MIDI channel clips
+    te::MidiClip* addLinkedMidiChannel(te::AudioTrack& track,
+                                        te::MidiClip& referenceClip,
+                                        int midiChannel,
+                                        const QString& displayName = {});
+    std::vector<te::MidiClip*> getLinkedMidiClips(te::AudioTrack* track,
+                                                   te::MidiClip* referenceClip) const;
+    bool isLinkedSecondary(te::MidiClip* clip) const;
+    int linkedChannelCount(te::MidiClip* clip) const;
+    void propagateClipPosition(te::MidiClip& primary);
+    void setChannelName(te::MidiClip& clip, const QString& name);
+    QString getChannelName(te::MidiClip* clip) const;
+
     // Automation parameter access
     QVector<te::AutomatableParameter*> getAutomatableParamsForTrack(te::AudioTrack* track) const;
     te::AutomatableParameter* getVolumeParam(te::AudioTrack* track) const;

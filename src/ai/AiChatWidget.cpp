@@ -13,6 +13,7 @@
 #include <QTimer>
 #include <QApplication>
 #include <QRegularExpression>
+#include <QAbstractTextDocumentLayout>
 #include <QSettings>
 
 namespace freedaw {
@@ -37,7 +38,7 @@ AiChatWidget::AiChatWidget(EditManager* editMgr, AudioEngine* audioEngine,
     streamThrottle_->setSingleShot(false);
     connect(streamThrottle_, &QTimer::timeout, this, [this]() {
         if (streamDirty_ && streamingLabel_) {
-            streamingLabel_->setText(renderMarkdown(streamingText_));
+            streamingLabel_->setMarkdown(streamingText_);
             scrollToBottom();
             streamDirty_ = false;
         }
@@ -302,23 +303,14 @@ void AiChatWidget::appendUserBubble(const QString& text)
 
 void AiChatWidget::appendAssistantBubble(const QString& text)
 {
-    auto& theme = ThemeManager::instance().current();
     auto* container = new QWidget(messagesContainer_);
     auto* layout = new QHBoxLayout(container);
     layout->setContentsMargins(0, 0, 0, 0);
 
-    auto* label = new QLabel(container);
-    label->setAccessibleName("Assistant message");
-    label->setTextFormat(Qt::RichText);
-    label->setWordWrap(true);
-    label->setTextInteractionFlags(Qt::TextSelectableByMouse | Qt::LinksAccessibleByMouse);
-    label->setText(renderMarkdown(text));
-    label->setStyleSheet(
-        QString("QLabel { background: %1; color: %2; border-radius: 8px; "
-                "padding: 8px 12px; font-size: 12px; }")
-            .arg(theme.surfaceLight.name(), theme.text.name()));
-    label->setMaximumWidth(320);
-    layout->addWidget(label);
+    auto* browser = createMessageBrowser(container);
+    browser->setAccessibleName("Assistant message");
+    browser->setMarkdown(text);
+    layout->addWidget(browser);
     layout->addStretch();
 
     int stretchIdx = messagesLayout_->count() - 1;
@@ -401,7 +393,6 @@ void AiChatWidget::appendErrorBubble(const QString& text)
 
 void AiChatWidget::updateStreamingBubble(const QString& token)
 {
-    auto& theme = ThemeManager::instance().current();
     streamingText_ += token;
 
     if (!streamingLabel_) {
@@ -410,16 +401,8 @@ void AiChatWidget::updateStreamingBubble(const QString& token)
         auto* layout = new QHBoxLayout(container);
         layout->setContentsMargins(0, 0, 0, 0);
 
-        streamingLabel_ = new QLabel(container);
+        streamingLabel_ = createMessageBrowser(container);
         streamingLabel_->setAccessibleName("Assistant message (streaming)");
-        streamingLabel_->setTextFormat(Qt::RichText);
-        streamingLabel_->setWordWrap(true);
-        streamingLabel_->setTextInteractionFlags(Qt::TextSelectableByMouse);
-        streamingLabel_->setStyleSheet(
-            QString("QLabel { background: %1; color: %2; border-radius: 8px; "
-                    "padding: 8px 12px; font-size: 12px; }")
-                .arg(theme.surfaceLight.name(), theme.text.name()));
-        streamingLabel_->setMaximumWidth(320);
         layout->addWidget(streamingLabel_);
         layout->addStretch();
 
@@ -437,7 +420,7 @@ void AiChatWidget::finalizeStreamingBubble()
 {
     streamThrottle_->stop();
     if (streamingLabel_ && !streamingText_.isEmpty()) {
-        streamingLabel_->setText(renderMarkdown(streamingText_));
+        streamingLabel_->setMarkdown(streamingText_);
     }
     streamingLabel_ = nullptr;
     streamingText_.clear();
@@ -624,48 +607,52 @@ void AiChatWidget::showSettingsDialog()
     dialog->exec();
 }
 
-// ── Markdown rendering ──────────────────────────────────────────────────────
+// ── Markdown browser factory ────────────────────────────────────────────────
 
-QString AiChatWidget::renderMarkdown(const QString& text) const
+QTextBrowser* AiChatWidget::createMessageBrowser(QWidget* parent) const
 {
-    static QRegularExpression codeBlockRe("```(?:\\w*)\n?(.*?)```",
-                                           QRegularExpression::DotMatchesEverythingOption);
-    static QRegularExpression inlineCodeRe("`([^`]+)`");
-    static QRegularExpression boldRe("\\*\\*(.+?)\\*\\*");
-    static QRegularExpression italicRe("\\*(.+?)\\*");
+    auto& theme = ThemeManager::instance().current();
+    auto* browser = new QTextBrowser(parent);
+    browser->setOpenExternalLinks(true);
+    browser->setFrameStyle(QFrame::NoFrame);
+    browser->setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    browser->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    browser->setReadOnly(true);
+    browser->setTextInteractionFlags(Qt::TextSelectableByMouse | Qt::LinksAccessibleByMouse);
 
-    struct Segment { bool isCode; QString content; };
-    QVector<Segment> segments;
-    int lastEnd = 0;
-    auto it = codeBlockRe.globalMatch(text);
-    while (it.hasNext()) {
-        auto match = it.next();
-        if (match.capturedStart() > lastEnd)
-            segments.append({false, text.mid(lastEnd, match.capturedStart() - lastEnd)});
-        segments.append({true, match.captured(1)});
-        lastEnd = match.capturedEnd();
-    }
-    if (lastEnd < text.size())
-        segments.append({false, text.mid(lastEnd)});
+    browser->setStyleSheet(
+        QString("QTextBrowser { background: %1; color: %2; border: none; "
+                "border-radius: 8px; font-size: 12px; }"
+                "QScrollBar { width: 0; height: 0; }")
+            .arg(theme.surfaceLight.name(), theme.text.name()));
 
-    QString html;
-    for (auto& seg : segments) {
-        if (seg.isCode) {
-            html += "<pre style=\"background:#1a1a1a; padding:6px; border-radius:4px; "
-                    "font-family:monospace; font-size:11px; white-space:pre-wrap;\">"
-                  + seg.content.toHtmlEscaped() + "</pre>";
-        } else {
-            QString escaped = seg.content.toHtmlEscaped();
-            escaped.replace(inlineCodeRe,
-                "<code style=\"background:#1a1a1a; padding:1px 4px; border-radius:3px; "
-                "font-family:monospace; font-size:11px;\">\\1</code>");
-            escaped.replace(boldRe, "<b>\\1</b>");
-            escaped.replace(italicRe, "<i>\\1</i>");
-            escaped.replace("\n", "<br/>");
-            html += escaped;
-        }
-    }
-    return html;
+    browser->document()->setDocumentMargin(10);
+    browser->document()->setDefaultStyleSheet(
+        QString("table { border-collapse: collapse; margin: 4px 0; }"
+                "th, td { border: 1px solid %1; padding: 3px 8px; }"
+                "th { background-color: %2; font-weight: bold; }"
+                "code { background-color: #1e1e1e; font-family: 'Consolas', monospace; font-size: 11px; }"
+                "pre { background-color: #1e1e1e; padding: 6px; font-family: 'Consolas', monospace; font-size: 11px; }"
+                "blockquote { border-left: 3px solid %1; padding-left: 8px; margin-left: 0; color: %3; }"
+                "a { color: %4; }"
+                "h1 { font-size: 16px; margin-top: 6px; margin-bottom: 4px; }"
+                "h2 { font-size: 14px; margin-top: 5px; margin-bottom: 3px; }"
+                "h3 { font-size: 13px; margin-top: 4px; margin-bottom: 2px; }"
+                "ul, ol { margin-top: 2px; margin-bottom: 2px; }")
+            .arg(theme.border.name(), theme.surface.name(),
+                 theme.textDim.name(), theme.accent.name()));
+
+    browser->setMaximumWidth(500);
+
+    connect(browser->document()->documentLayout(),
+            &QAbstractTextDocumentLayout::documentSizeChanged,
+            browser, [browser](const QSizeF& newSize) {
+        int h = qMax(28, static_cast<int>(newSize.height()) + 4);
+        browser->setMinimumHeight(h);
+        browser->setMaximumHeight(h);
+    });
+
+    return browser;
 }
 
 } // namespace freedaw

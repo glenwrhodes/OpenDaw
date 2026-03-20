@@ -162,92 +162,86 @@
 
 ## 3. Automation Envelopes
 
-### 3.1 Automation lane UI on timeline **[MUST]**
+### 3.1 ~~Automation lane UI on timeline~~ **[MUST]** -- DONE
 
-**What:** Add expandable automation lanes below each track in the timeline, showing parameter envelopes that can be edited with point add/move/delete.
+**What:** Expandable automation lanes below each track in the timeline, showing parameter envelopes that can be edited with point add/move/delete, freehand draw, and curve shape editing.
 
-**Where to start:**
-- `src/ui/timeline/TimelineView.cpp` -- tracks are laid out vertically at `y = trackIndex * trackHeight_`. Automation lanes go below each track's clip area.
-- `src/ui/timeline/TrackHeaderWidget.cpp` -- add an "Automation" toggle or dropdown to select which parameter to show.
-- Coordinate system: `pixelsPerBeat_` for X, extend Y for the automation lane height.
+**Files created:**
+- `src/ui/timeline/AutomationLaneItem.h/.cpp` -- `QGraphicsItem` that draws the envelope curve (sampled from engine for pixel-perfect accuracy), handles point creation, freehand drawing, and curve segment bending.
+- `src/ui/timeline/AutomationPointItem.h/.cpp` -- Draggable diamond-shaped point handles with snap, shift-constrain, value tooltips, and right-click curve shape presets.
+- `src/ui/timeline/AutomationLaneHeader.h/.cpp` -- Header widget with parameter dropdown (Volume, Pan, all plugin params), bypass toggle, and close button.
+- `src/ui/timeline/EnvelopeUtils.h` -- Shared coordinate/path/hit-test utilities designed for reuse by future CC lane.
 
-**New files:**
-- `src/ui/timeline/AutomationLaneItem.h` / `.cpp` -- `QGraphicsItem` subclass that draws the envelope line and handles point interaction.
-- `src/ui/timeline/AutomationPoint.h` / `.cpp` -- (optional, can be inline) represents a draggable point.
+**Files modified:**
+- `TimelineView.h/.cpp` -- Variable-height `TrackLayoutInfo` layout system, automation lane management, resize handles, playhead-driven lane updates.
+- `TrackHeaderWidget.h/.cpp` -- "Auto" disclosure button, `setAutomationVisible()` for state sync.
+- `EditManager.h/.cpp` -- `getAutomatableParamsForTrack()`, `getVolumeParam()`, `getPanParam()` helpers.
+- `CMakeLists.txt` -- Added 7 new source files.
 
-**Tracktion Engine API:**
-- Each `te::Plugin` has `getAutomatableParameters()` returning `juce::Array<te::AutomatableParameter*>`.
-- Each `te::AutomatableParameter` has a `getCurve()` method returning `te::AutomationCurve&`.
-- `te::AutomationCurve` has: `getNumPoints()`, `getPointTime(i)`, `getPointValue(i)`, `addPoint(time, value, curveValue)`, `removePoint(index)`, `movePoint(index, newTime, newValue, ...)`.
-- Volume and pan are on `te::VolumeAndPanPlugin` (present on every track): `volParam` and `panParam`.
-- Automation persists in the `.tracktionedit` XML automatically.
-
-**Implementation:**
-1. Add a parameter selector per track (dropdown in `TrackHeaderWidget` listing "Volume", "Pan", and plugin parameter names).
-2. When a parameter is selected, create an `AutomationLaneItem` in the `QGraphicsScene` positioned below the track's clip row.
-3. `AutomationLaneItem::paint()` reads points from `te::AutomationCurve` and draws lines/curves.
-4. Mouse interaction:
-   - Double-click empty space: add point via `curve.addPoint(...)`.
-   - Drag existing point: `curve.movePoint(...)`.
-   - Right-click point: delete via `curve.removePoint(...)`.
-5. Adjust `TimelineView` layout to account for open automation lanes (increase effective track height when lane is visible).
-6. Sync with playback: during transport play, the engine reads the curve automatically; no extra wiring needed.
-
-**Acceptance criteria:**
-- User can show/hide an automation lane per track.
-- User can add, move, and delete automation points for volume, pan, and plugin parameters.
-- Automation plays back correctly and exports correctly.
-- Points persist after save/reload.
+**Features implemented:**
+- Single automation lane per track with parameter switcher dropdown.
+- Double-click to add points; drag to move with grid snap and shift-constrain.
+- Freehand draw mode with automatic simplification.
+- Ctrl+drag curve segments to bend (ease in/out); right-click presets (Linear, Ease In/Out, Sharp, Step).
+- Discrete/boolean parameter support (step rendering, state snapping).
+- Resizable lane height (50-120px) via drag handle.
+- Curve line with drop shadow; playback position dot that follows the curve.
+- Value labels on lane edges (dB for volume, L/R for pan, % for generic).
+- Keyboard shortcut: `A` to toggle automation lane on selected track.
+- Automation data persists in `.tracktionedit` files automatically.
 
 ---
 
-### 3.2 Automation read/write modes on mixer **[SHOULD]**
+### 3.2 ~~Automation read/write/touch/latch modes on mixer~~ **[SHOULD]** -- DONE
 
-**What:** Add Read/Write/Off buttons to each channel strip so automation can be recorded by moving faders during playback.
+**What:** Per-track automation mode button on each channel strip (including master) with four modes: Read, Touch, Latch, Write.
 
-**Where to start:** `src/ui/mixer/ChannelStrip.cpp` -- add buttons near the existing mute/solo row.
-
-**Tracktion Engine API:**
-- `te::AutomatableParameter::setAutomationMode(...)` with modes like `readEnabled`, `writeEnabled`.
-- When write is enabled and transport is playing, moving a parameter value writes to the automation curve.
+**Implementation:**
+- `ChannelStrip.cpp` -- Cycle button (READ → TOUCH → LATCH → WRITE → READ) sets per-track `track->automationMode` and global `AutomationRecordManager` flags.
+- Touch mode: records only while actively moving a control, reverts to reading on release.
+- Latch mode: starts recording on first touch, holds last value until stop.
+- Write mode: records all params from playback start (most destructive).
+- Master channel strip automation supported via `edit->getMasterTrack()->automationMode`.
+- Volume faders, pan knobs, and effect parameter knobs visually follow automation during playback (30fps polling).
+- Scrubbing (moving playhead while stopped) updates controls to show automation value at that position.
+- Controls only tracked in non-WRITE modes to avoid fighting with user input.
+- Pan automation recording fixed: uses `panParam->setParameter()` instead of `pan.setValue()`.
 
 ---
 
 ## 4. MIDI CC Lanes and Channel Handling
 
-### 4.1 CC lane editor in piano roll **[MUST]**
+### 4.1 ~~CC lane editor in piano roll~~ **[MUST]** -- DONE
 
-**What:** Add a CC lane panel below the velocity lane in the piano roll, allowing users to draw and edit CC events.
+**What:** Automation-grade CC lane panel below the velocity lane in the piano roll, with full point editing.
 
-**Where to start:**
-- `src/ui/pianoroll/PianoRollEditor.cpp` -- the `VelocityLane` is positioned below `NoteGrid` (line ~136). The CC lane goes in the same layout, below velocity.
-- `src/ui/pianoroll/VelocityLane.cpp` -- use as a structural template for the CC lane widget.
+**Files created:**
+- `src/ui/pianoroll/CcLane.h/.cpp` -- QWidget with cached point model, diamond-handle painting, step-curve rendering via `EnvelopeUtils`, freehand draw, individual and bulk point editing.
 
-**New files:**
-- `src/ui/pianoroll/CcLane.h` / `.cpp` -- `QWidget` subclass for drawing/editing CC events.
+**Files modified:**
+- `PianoRollEditor.h/.cpp` -- CC number combo box (CC1/7/10/11/64 + arbitrary via "Other..."), CC row layout below velocity, scroll/zoom/clip sync, snap function pass-through.
+- `CMakeLists.txt` -- Added CcLane source files.
 
-**Tracktion Engine API:**
-- `te::MidiClip` → `getSequence()` returns `te::MidiList&`.
-- `te::MidiList` has `getControllerEvents()` returning controller event data.
-- To add a CC event: `midiList.addControllerEvent(beatPosition, ccNumber, ccValue, undoManager)`.
-- To remove: iterate events and remove by index.
-- CC numbers: 1 (Mod Wheel), 7 (Volume), 10 (Pan), 11 (Expression), 64 (Sustain).
-
-**Implementation:**
-1. Add a CC number selector (combo box) in `PianoRollEditor` toolbar: CC1, CC7, CC10, CC11, CC64, plus "Other..." for arbitrary CC.
-2. `CcLane` widget:
-   - X axis: beats (synced with `NoteGrid` scroll and zoom via `pixelsPerBeat`).
-   - Y axis: CC value 0-127.
-   - Draw mode: click-drag to draw CC values (similar to velocity lane drag).
-   - Edit mode: click existing events to select and move.
-3. Connect to undo: pass `edit->getUndoManager()` to all add/remove calls.
-4. On clip change or edit, emit `midiClipModified` so the lane refreshes.
-
-**Acceptance criteria:**
-- User can select a CC number and see existing CC data drawn as a lane.
-- User can draw new CC values by clicking/dragging.
-- CC data plays back through the MIDI output.
-- CC data persists after save/reload.
+**Features implemented:**
+- CC number selector combo box in toolbar with preset CCs and custom entry.
+- Step-curve rendering with translucent fill using `EnvelopeUtils::buildEnvelopePath(discrete=true)`.
+- Diamond point handles at each CC event (8px normal, 10px hovered), styled like `AutomationPointItem`.
+- Double-click to add a point at any position.
+- Click-drag on empty space for freehand CC drawing with range-overwrite and interval simplification.
+- Alt+drag (or Line tool) for straight-line CC drawing -- linear ramp between start and end points.
+- Freehand/Line draw tool toggle buttons in the CC header panel for users who prefer clicking over modifier keys.
+- Point drag with grid snap and shift-constrain (horizontal or vertical lock).
+- Value tooltip during drag (e.g. "CC1: 87").
+- Ctrl+drag rubber-band multi-select; Shift+click for additive selection toggle.
+- Bulk move: drag any selected point to move entire selection as a group.
+- Delete key removes selected points; right-click context menu for single/multi delete and "Add Point Here".
+- Ctrl+A selects all; Escape clears selection.
+- Horizontal reference lines at 25%/50%/75% with value labels.
+- Collapsible CC lane (collapsed by default) with disclosure arrow; "Vel" label on velocity lane header.
+- Selected CC name displayed in the left header panel alongside the collapse toggle and draw tool buttons.
+- Horizontal separator between velocity lane and CC lane.
+- Undo/redo for all operations via `edit->getUndoManager()`.
+- CC data persists in `.tracktionedit` files automatically (Tracktion ValueTree serialization).
 
 ---
 
@@ -817,14 +811,15 @@
 
 ## 17. Summary: New Files to Create
 
-| File | Purpose |
-|------|---------|
-| `src/ui/dialogs/AudioSettingsDialog.h/.cpp` | Audio device selection dialog |
-| `src/ui/dialogs/RecoveryDialog.h/.cpp` | Crash recovery prompt on startup |
-| `src/ui/timeline/AutomationLaneItem.h/.cpp` | Automation envelope drawing and editing in timeline |
-| `src/ui/pianoroll/CcLane.h/.cpp` | CC event drawing and editing lane in piano roll |
-
-All other tasks modify existing files only.
+| File | Purpose | Status |
+|------|---------|--------|
+| `src/ui/dialogs/AudioSettingsDialog.h/.cpp` | Audio device selection dialog | DONE |
+| `src/ui/dialogs/RecoveryDialog.h/.cpp` | Crash recovery prompt on startup | DONE |
+| `src/ui/timeline/AutomationLaneItem.h/.cpp` | Automation envelope drawing and editing in timeline | DONE |
+| `src/ui/timeline/AutomationPointItem.h/.cpp` | Draggable automation point handles | DONE |
+| `src/ui/timeline/AutomationLaneHeader.h/.cpp` | Automation lane header with parameter selector | DONE |
+| `src/ui/timeline/EnvelopeUtils.h` | Shared coordinate/path utilities for automation and CC lanes | DONE |
+| `src/ui/pianoroll/CcLane.h/.cpp` | CC event drawing and editing lane in piano roll | DONE |
 
 All other tasks modify existing files. Remember to add new `.h`/`.cpp` pairs to `FREEDAW_SOURCES` in `CMakeLists.txt`.
 
@@ -841,8 +836,8 @@ Quick-reference of every task sorted by priority.
 | ~~1.3~~ | ~~Crash recovery on startup~~ | ~~Data Safety~~ DONE |
 | ~~2.1~~ | ~~Audio settings dialog~~ | ~~Device/Performance~~ DONE |
 | ~~2.2~~ | ~~Live status bar~~ | ~~Device/Performance~~ DONE |
-| 3.1 | Automation lane UI on timeline | Automation |
-| 4.1 | CC lane editor in piano roll | MIDI |
+| ~~3.1~~ | ~~Automation lane UI on timeline~~ | ~~Automation~~ DONE |
+| ~~4.1~~ | ~~CC lane editor in piano roll~~ | ~~MIDI~~ DONE |
 | 4.2 | MIDI channel selection | MIDI |
 | 5.1 | Loop in/out region UI | Transport |
 | 5.2 | Metronome / click track | Transport |
@@ -857,7 +852,7 @@ Quick-reference of every task sorted by priority.
 |----|------|---------|
 | ~~1.4~~ | ~~Window title with project name~~ | ~~Data Safety~~ DONE |
 | 1.5 | Recent projects list | Data Safety |
-| 3.2 | Automation read/write modes on mixer | Automation |
+| ~~3.2~~ | ~~Automation read/write/touch/latch modes on mixer~~ | ~~Automation~~ DONE |
 | 4.3 | Quantize strength and swing | MIDI |
 | 4.4 | Transpose selected notes | MIDI |
 | 6.1 | Stem export | Export |

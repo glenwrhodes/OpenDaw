@@ -12,6 +12,7 @@
 #include <QCheckBox>
 #include <QKeyEvent>
 #include <QTimer>
+#include <QTextBrowser>
 
 namespace freedaw {
 
@@ -58,7 +59,7 @@ private:
     void showSettingsDialog();
     void clearChat();
 
-    QString renderMarkdown(const QString& text) const;
+    QTextBrowser* createMessageBrowser(QWidget* parent) const;
 
     AiService* aiService_;
     EditManager* editMgr_;
@@ -72,7 +73,7 @@ private:
     QPushButton* sendBtn_ = nullptr;
     QLabel* statusLabel_ = nullptr;
 
-    QLabel* streamingLabel_ = nullptr;
+    QTextBrowser* streamingLabel_ = nullptr;
     QString streamingText_;
     bool isStreaming_ = false;
     QTimer* streamThrottle_ = nullptr;

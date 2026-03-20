@@ -55,6 +55,7 @@ private:
     void populateOutputCombo();
     void onOutputComboChanged(int index);
     void onArmToggled(bool armed);
+    void onMidiChannelChanged(int index);
     void startRenameEdit();
 
     te::AudioTrack* track_ = nullptr;
@@ -65,6 +66,7 @@ private:
 
     QComboBox* inputCombo_ = nullptr;
     QComboBox* outputCombo_ = nullptr;
+    QComboBox* midiChannelCombo_ = nullptr;
     QLabel* nameLabel_ = nullptr;
     QPushButton* instrumentBtn_ = nullptr;
     VolumeFader* fader_ = nullptr;

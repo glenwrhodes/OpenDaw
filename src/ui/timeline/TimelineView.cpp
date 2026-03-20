@@ -913,6 +913,11 @@ void TimelineView::rebuildClips()
         auto* track = tracks[ti];
         int clipIdx = 0;
         for (auto* clip : track->getClips()) {
+            if (auto* mc = dynamic_cast<te::MidiClip*>(clip)) {
+                if (editMgr_->isLinkedSecondary(mc))
+                    continue;
+            }
+
             qDebug() << "[rebuildClips] track" << ti << "clip" << clipIdx
                      << QString::fromStdString(clip->getName().toStdString());
             auto* item = new ClipItem(clip, ti, pixelsPerBeat_, trackHeight_);
@@ -920,7 +925,13 @@ void TimelineView::rebuildClips()
                                 &pixelsPerBeat_, &trackHeight_, numTracks,
                                 [this]() { rebuildClips(); });
             if (item->isMidiClip()) {
-                item->loadMidiPreview();
+                if (auto* mc = dynamic_cast<te::MidiClip*>(clip)) {
+                    auto linked = editMgr_->getLinkedMidiClips(track, mc);
+                    item->setLinkedChannelCount(static_cast<int>(linked.size()));
+                    item->loadMidiPreviewFromClips(linked);
+                } else {
+                    item->loadMidiPreview();
+                }
             } else {
                 const int waveformPoints = std::clamp(
                     static_cast<int>(std::max(50.0, item->rect().width() / 2.0)),
@@ -928,7 +939,6 @@ void TimelineView::rebuildClips()
                 item->loadWaveform(waveformPoints);
             }
             item->updateGeometry(pixelsPerBeat_, trackHeight_, 0);
-            // Offset clip Y position using layout
             double yOff = trackYOffset(ti);
             item->setPos(item->pos().x(), yOff);
             item->setRect(0, 0, item->rect().width(), trackHeight_ - 2);
@@ -1051,6 +1061,8 @@ void TimelineView::splitSelectedClipsAtPlayhead()
     const auto playheadTime = editMgr_->transport().getPosition();
     bool didSplitAny = false;
 
+    std::vector<te::MidiClip*> linkedToSplit;
+
     for (auto* item : clipItems_) {
         if (!item || !item->isSelected())
             continue;
@@ -1063,9 +1075,26 @@ void TimelineView::splitSelectedClipsAtPlayhead()
         if (playheadTime <= clipRange.getStart() || playheadTime >= clipRange.getEnd())
             continue;
 
+        if (auto* mc = dynamic_cast<te::MidiClip*>(clip)) {
+            auto* track = mc->getAudioTrack();
+            if (track) {
+                auto linked = editMgr_->getLinkedMidiClips(track, mc);
+                for (auto* lc : linked) {
+                    if (lc != mc)
+                        linkedToSplit.push_back(lc);
+                }
+            }
+        }
+
         if (auto* clipTrack = dynamic_cast<te::ClipTrack*>(clip->getClipTrack())) {
             if (clipTrack->splitClip(*clip, playheadTime) != nullptr)
                 didSplitAny = true;
+        }
+    }
+
+    for (auto* lc : linkedToSplit) {
+        if (auto* clipTrack = dynamic_cast<te::ClipTrack*>(lc->getClipTrack())) {
+            clipTrack->splitClip(*lc, playheadTime);
         }
     }
 
@@ -1084,6 +1113,22 @@ void TimelineView::deleteSelectedClips()
     }
 
     if (toDelete.empty()) return;
+
+    std::vector<te::Clip*> linkedToDelete;
+    for (auto* clip : toDelete) {
+        if (auto* mc = dynamic_cast<te::MidiClip*>(clip)) {
+            auto* track = mc->getAudioTrack();
+            if (track) {
+                auto linked = editMgr_->getLinkedMidiClips(track, mc);
+                for (auto* lc : linked) {
+                    if (lc != mc)
+                        linkedToDelete.push_back(lc);
+                }
+            }
+        }
+    }
+    for (auto* lc : linkedToDelete)
+        toDelete.push_back(lc);
 
     for (auto* clip : toDelete)
         clip->removeFromParent();

@@ -1,5 +1,6 @@
 #include "NoteItem.h"
 #include "NoteGrid.h"
+#include "ChannelColors.h"
 #include "ui/timeline/GridSnapper.h"
 #include "utils/ThemeManager.h"
 #include <QPainter>
@@ -22,8 +23,10 @@ namespace freedaw {
 
 NoteItem::NoteItem(te::MidiNote* note, te::MidiClip* clip,
                    double pixelsPerBeat, double noteRowHeight,
-                   int lowestNote, QGraphicsItem* parent)
+                   int lowestNote, int channelNumber,
+                   QGraphicsItem* parent)
     : QGraphicsRectItem(parent), note_(note), clip_(clip),
+      channelNumber_(channelNumber),
       pixelsPerBeat_(pixelsPerBeat), noteRowHeight_(noteRowHeight),
       lowestNote_(lowestNote)
 {
@@ -33,13 +36,15 @@ NoteItem::NoteItem(te::MidiNote* note, te::MidiClip* clip,
 }
 
 void NoteItem::updateGeometry(double pixelsPerBeat, double noteRowHeight,
-                              int lowestNote, int totalNotes)
+                              int lowestNote, int totalNotes,
+                              double beatOffset)
 {
     pixelsPerBeat_ = pixelsPerBeat;
     noteRowHeight_ = noteRowHeight;
     lowestNote_ = lowestNote;
+    beatOffset_ = beatOffset;
 
-    double startBeat = note_->getStartBeat().inBeats();
+    double startBeat = note_->getStartBeat().inBeats() + beatOffset;
     double lengthBeats = note_->getLengthBeats().inBeats();
     int pitch = note_->getNoteNumber();
 
@@ -60,9 +65,21 @@ void NoteItem::paint(QPainter* painter,
     auto& theme = ThemeManager::instance().current();
     QRectF r = rect();
 
-    QColor color = isSelected() ? theme.pianoRollNoteSelected : theme.pianoRollNote;
+    QColor baseColor = channelColor(channelNumber_);
+    QColor color;
+    if (isSelected()) {
+        QColor sel = theme.pianoRollNoteSelected;
+        color = QColor((sel.red() + baseColor.red()) / 2,
+                       (sel.green() + baseColor.green()) / 2,
+                       (sel.blue() + baseColor.blue()) / 2);
+    } else {
+        color = baseColor;
+    }
+
     int velocity = note_->getVelocity();
     double alpha = 0.6 + 0.4 * (velocity / 127.0);
+    if (!isActiveChannel_)
+        alpha *= 0.35;
     color.setAlphaF(alpha);
 
     painter->fillRect(r, color);

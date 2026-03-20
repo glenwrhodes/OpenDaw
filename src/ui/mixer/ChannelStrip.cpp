@@ -5,6 +5,7 @@
 #include <QHBoxLayout>
 #include <QSignalBlocker>
 #include <QMouseEvent>
+#include <algorithm>
 #include <cmath>
 
 namespace {
@@ -153,6 +154,36 @@ void ChannelStrip::setupUI()
             emit instrumentSelectRequested(track_);
         });
         layout->addWidget(instrumentBtn_);
+
+        midiChannelCombo_ = new QComboBox(this);
+        midiChannelCombo_->setAccessibleName("MIDI Channel");
+        midiChannelCombo_->setToolTip("MIDI output channel (1-16)");
+        midiChannelCombo_->setFixedHeight(20);
+        for (int ch = 1; ch <= 16; ++ch)
+            midiChannelCombo_->addItem(QString("Ch %1").arg(ch), ch);
+        midiChannelCombo_->setStyleSheet(
+            QString("QComboBox { background: %1; color: %2; border: 1px solid %3; "
+                    "border-radius: 2px; font-size: 8px; padding: 1px 2px; }"
+                    "QComboBox:hover { border: 1px solid %4; }"
+                    "QComboBox::drop-down { width: 12px; }"
+                    "QComboBox QAbstractItemView { background: %1; color: %2; "
+                    "selection-background-color: %5; font-size: 8px; }")
+                .arg(theme.background.name(), theme.text.name(),
+                     theme.border.name(), theme.accent.name(),
+                     theme.surfaceLight.name()));
+
+        int currentCh = 1;
+        for (auto* clip : track_->getClips()) {
+            if (auto* mc = dynamic_cast<te::MidiClip*>(clip)) {
+                currentCh = mc->getMidiChannel().getChannelNumber();
+                break;
+            }
+        }
+        midiChannelCombo_->setCurrentIndex(std::clamp(currentCh, 1, 16) - 1);
+
+        connect(midiChannelCombo_, QOverload<int>::of(&QComboBox::currentIndexChanged),
+                this, &ChannelStrip::onMidiChannelChanged);
+        layout->addWidget(midiChannelCombo_);
     }
 
     panKnob_ = new RotaryKnob(this);
@@ -480,6 +511,17 @@ void ChannelStrip::refresh()
         populateInputCombo();
     if (editMgr_ && outputCombo_)
         populateOutputCombo();
+    if (midiChannelCombo_ && track_) {
+        int ch = 1;
+        for (auto* clip : track_->getClips()) {
+            if (auto* mc = dynamic_cast<te::MidiClip*>(clip)) {
+                ch = mc->getMidiChannel().getChannelNumber();
+                break;
+            }
+        }
+        QSignalBlocker block(midiChannelCombo_);
+        midiChannelCombo_->setCurrentIndex(std::clamp(ch, 1, 16) - 1);
+    }
 }
 
 void ChannelStrip::updateMeter()
@@ -739,6 +781,17 @@ void ChannelStrip::onArmToggled(bool armed)
     }
 
     editMgr_->setTrackRecordEnabled(*track_, armed);
+}
+
+void ChannelStrip::onMidiChannelChanged(int index)
+{
+    if (!track_ || index < 0) return;
+    int ch = midiChannelCombo_->itemData(index).toInt();
+    te::MidiChannel midiCh(ch);
+    for (auto* clip : track_->getClips()) {
+        if (auto* mc = dynamic_cast<te::MidiClip*>(clip))
+            mc->setMidiChannel(midiCh);
+    }
 }
 
 void ChannelStrip::updateVolumeLabel()

@@ -522,6 +522,45 @@ QJsonArray AiToolDefs::allTools()
         "Redo the last undone action.",
         {}));
 
+    {
+        QJsonObject channelObj;
+        channelObj["type"] = "object";
+        QJsonObject channelProps;
+        channelProps["channel"] = propNumber("MIDI channel number (1-16).", 1, 16);
+        channelProps["name"] = prop("string", "Display name for this channel (e.g. 'Violin 1').");
+        channelObj["properties"] = channelProps;
+        channelObj["required"] = QJsonArray({"channel", "name"});
+
+        QJsonObject channelsArr;
+        channelsArr["type"] = "array";
+        channelsArr["items"] = channelObj;
+        channelsArr["description"] = "Array of channel definitions to create.";
+
+        QJsonObject props;
+        props["track"] = trackProp();
+        props["channels"] = channelsArr;
+
+        tools.append(makeTool("setup_midi_channels",
+            "Create multiple linked MIDI channel clips on a track for multi-timbral instruments. "
+            "Creates co-located MIDI clips (same position/length) each on a different channel, "
+            "with display names (e.g. 'Violin 1', 'Viola'). If no MIDI clip exists on the track, "
+            "one is created first.",
+            props,
+            QJsonArray({"track", "channels"})));
+    }
+
+    tools.append(makeTool("set_channel_name",
+        "Set the display name of a MIDI channel clip on a track.",
+        {{"track", trackProp()},
+         {"channel", propNumber("MIDI channel number (1-16).", 1, 16)},
+         {"name", prop("string", "New display name.")}},
+        QJsonArray({"track", "channel", "name"})));
+
+    tools.append(makeTool("get_channel_names",
+        "Get all MIDI channel display names for clips on a track.",
+        {{"track", trackProp()}},
+        QJsonArray({"track"})));
+
     return tools;
 }
 

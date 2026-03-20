@@ -97,6 +97,8 @@ set(FREEDAW_SOURCES
     src/ui/pianoroll/NoteGrid.h           src/ui/pianoroll/NoteGrid.cpp
     src/ui/pianoroll/NoteItem.h           src/ui/pianoroll/NoteItem.cpp
     src/ui/pianoroll/VelocityLane.h       src/ui/pianoroll/VelocityLane.cpp
+    src/ui/pianoroll/CcLane.h             src/ui/pianoroll/CcLane.cpp
+    src/ui/pianoroll/ChannelColors.h
     src/ui/pianoroll/PianoRollRuler.h     src/ui/pianoroll/PianoRollRuler.cpp
     src/ui/routing/RoutingView.h          src/ui/routing/RoutingView.cpp
     src/ui/routing/RoutingNode.h          src/ui/routing/RoutingNode.cpp

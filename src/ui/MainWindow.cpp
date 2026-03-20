@@ -94,7 +94,7 @@ MainWindow::MainWindow(FreeDawApplication& app, QWidget* parent)
     connect(timelineView_, &TimelineView::selectedClipsDeleted,
             this, [this]() {
                 if (pianoRoll_)
-                    pianoRoll_->setClip(nullptr);
+                    pianoRoll_->setClip(nullptr, nullptr);
                 if (audioClipEditor_)
                     audioClipEditor_->setClip(nullptr, nullptr);
             });
@@ -328,6 +328,10 @@ void MainWindow::createMenus()
     viewMenu->addAction("Toggle &Mixer", this, [this]() {
         mixerDock_->setVisible(!mixerDock_->isVisible());
     });
+    viewMenu->addAction("Toggle &Piano Roll", this, [this]() {
+        pianoRollDock_->setVisible(!pianoRollDock_->isVisible());
+        if (pianoRollDock_->isVisible()) pianoRollDock_->raise();
+    });
     viewMenu->addAction("Toggle &Browser", this, [this]() {
         browserDock_->setVisible(!browserDock_->isVisible());
     });
@@ -532,6 +536,12 @@ void MainWindow::createToolBar()
         effectsToggle->setToolTip("Toggle Effects");
         mainToolBar_->addAction(effectsToggle);
     }
+    if (pianoRollDock_) {
+        auto* pianoRollToggle = pianoRollDock_->toggleViewAction();
+        pianoRollToggle->setIcon(faIcon(icons::fa::Keyboard));
+        pianoRollToggle->setToolTip("Toggle Piano Roll");
+        mainToolBar_->addAction(pianoRollToggle);
+    }
     if (audioClipDock_) {
         auto* audioClipToggle = audioClipDock_->toggleViewAction();
         audioClipToggle->setIcon(faIcon(icons::fa::Waveform));
@@ -587,7 +597,7 @@ void MainWindow::createDocks()
 
     connect(&editMgr_, &EditManager::aboutToChangeEdit, this, [this]() {
         if (pianoRoll_)
-            pianoRoll_->setClip(nullptr);
+            pianoRoll_->setClip(nullptr, nullptr);
     });
 
     connect(&editMgr_, &EditManager::editChanged, this, [this]() {
@@ -595,7 +605,7 @@ void MainWindow::createDocks()
             if (editMgr_.isClipValid(pianoRoll_->clip()))
                 pianoRoll_->refresh();
             else
-                pianoRoll_->setClip(nullptr);
+                pianoRoll_->setClip(nullptr, nullptr);
         }
     });
 
@@ -608,7 +618,7 @@ void MainWindow::createDocks()
     connect(&editMgr_, &EditManager::midiClipSelected,
             this, [this](te::MidiClip* clip) {
                 if (pianoRollDock_ && pianoRollDock_->isVisible() && pianoRoll_ && clip)
-                    pianoRoll_->setClip(clip);
+                    pianoRoll_->setClip(clip, &editMgr_);
             });
 
     // Audio Clip Editor dock (bottom, tabbed with mixer and piano roll)
@@ -918,7 +928,7 @@ void MainWindow::onMidiClipDoubleClicked(te::MidiClip* clip)
     pianoRollDock_->raise();
 
     if (pianoRoll_)
-        pianoRoll_->setClip(clip);
+        pianoRoll_->setClip(clip, &editMgr_);
 }
 
 void MainWindow::onAudioClipDoubleClicked(te::WaveAudioClip* clip)

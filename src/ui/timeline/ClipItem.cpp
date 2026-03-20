@@ -102,26 +102,41 @@ void ClipItem::loadWaveform(int numPoints)
 
 void ClipItem::loadMidiPreview()
 {
+    if (isMidiClip_ && clip_) {
+        auto* mc = dynamic_cast<te::MidiClip*>(clip_);
+        if (mc)
+            loadMidiPreviewFromClips({mc});
+    }
+}
+
+void ClipItem::loadMidiPreviewFromClips(const std::vector<te::MidiClip*>& clips)
+{
     midiNotes_.clear();
     midiLowestNote_ = 127;
     midiHighestNote_ = 0;
 
-    if (!isMidiClip_ || !clip_) return;
+    if (!isMidiClip_ || clips.empty()) return;
 
-    auto* midiClip = dynamic_cast<te::MidiClip*>(clip_);
-    if (!midiClip) return;
+    auto* primaryClip = clips.front();
+    auto& ts = primaryClip->edit.tempoSequence;
+    double primaryStartBeat = ts.toBeats(primaryClip->getPosition().getStart()).inBeats();
 
-    auto& seq = midiClip->getSequence();
-    for (auto* note : seq.getNotes()) {
-        MidiNotePreview np;
-        np.pitch = note->getNoteNumber();
-        np.startBeat = note->getStartBeat().inBeats();
-        np.lengthBeats = note->getLengthBeats().inBeats();
-        np.velocity = note->getVelocity();
-        midiNotes_.push_back(np);
+    for (auto* mc : clips) {
+        double clipStartBeat = ts.toBeats(mc->getPosition().getStart()).inBeats();
+        double beatOffset = clipStartBeat - primaryStartBeat;
 
-        midiLowestNote_ = std::min(midiLowestNote_, np.pitch);
-        midiHighestNote_ = std::max(midiHighestNote_, np.pitch);
+        auto& seq = mc->getSequence();
+        for (auto* note : seq.getNotes()) {
+            MidiNotePreview np;
+            np.pitch = note->getNoteNumber();
+            np.startBeat = note->getStartBeat().inBeats() + beatOffset;
+            np.lengthBeats = note->getLengthBeats().inBeats();
+            np.velocity = note->getVelocity();
+            midiNotes_.push_back(np);
+
+            midiLowestNote_ = std::min(midiLowestNote_, np.pitch);
+            midiHighestNote_ = std::max(midiHighestNote_, np.pitch);
+        }
     }
 
     if (midiLowestNote_ > midiHighestNote_) {
@@ -250,6 +265,23 @@ void ClipItem::paint(QPainter* painter,
         QString name = QString::fromStdString(clip_->getName().toStdString());
         painter->drawText(r.adjusted(4, 2, -2, 0),
                           Qt::AlignLeft | Qt::AlignTop, name);
+
+        if (linkedChannelCount_ > 1) {
+            QString badge = QString("%1ch").arg(linkedChannelCount_);
+            QFont badgeFont = f;
+            badgeFont.setPixelSize(8);
+            badgeFont.setBold(true);
+            painter->setFont(badgeFont);
+            QFontMetrics fm(badgeFont);
+            int tw = fm.horizontalAdvance(badge) + 6;
+            int th = fm.height() + 2;
+            QRectF badgeRect(r.right() - tw - 3, r.top() + 2, tw, th);
+            painter->setPen(Qt::NoPen);
+            painter->setBrush(QColor(0, 0, 0, 140));
+            painter->drawRoundedRect(badgeRect, 3, 3);
+            painter->setPen(QColor(220, 220, 220));
+            painter->drawText(badgeRect, Qt::AlignCenter, badge);
+        }
     } else {
         return;
     }
@@ -510,6 +542,7 @@ void ClipItem::mouseReleaseEvent(QGraphicsSceneMouseEvent* event)
 
             if (isMidiClip_ && editMgr_) {
                 if (auto* mc = dynamic_cast<te::MidiClip*>(clip_)) {
+                    editMgr_->propagateClipPosition(*mc);
                     editMgr_->trimNotesToClipBounds(*mc);
                     emit editMgr_->midiClipModified(mc);
                 }
@@ -586,6 +619,11 @@ void ClipItem::mouseReleaseEvent(QGraphicsSceneMouseEvent* event)
                 }
             } else {
                 clip_->setStart(newStartTime, false, true);
+
+                if (isMidiClip_) {
+                    if (auto* mc = dynamic_cast<te::MidiClip*>(clip_))
+                        editMgr_->propagateClipPosition(*mc);
+                }
 
                 if (newTrack != trackIndex_) {
                     auto tracks = editMgr_->getAudioTracks();

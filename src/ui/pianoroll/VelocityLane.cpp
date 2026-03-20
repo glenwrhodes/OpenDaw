@@ -1,4 +1,5 @@
 #include "VelocityLane.h"
+#include "ChannelColors.h"
 #include "utils/ThemeManager.h"
 #include <QPainter>
 #include <QMouseEvent>
@@ -16,7 +17,20 @@ VelocityLane::VelocityLane(QWidget* parent)
 
 void VelocityLane::setClip(te::MidiClip* clip)
 {
-    clip_ = clip;
+    primaryClip_ = clip;
+    allClips_.clear();
+    hiddenChannels_.clear();
+    if (clip)
+        allClips_.push_back(clip);
+    update();
+}
+
+void VelocityLane::setClips(const std::vector<te::MidiClip*>& clips,
+                             const std::set<int>& hidden)
+{
+    allClips_ = clips;
+    hiddenChannels_ = hidden;
+    primaryClip_ = clips.empty() ? nullptr : clips.front();
     update();
 }
 
@@ -28,14 +42,17 @@ void VelocityLane::refresh()
 std::vector<te::MidiNote*> VelocityLane::notesAtX(double x) const
 {
     std::vector<te::MidiNote*> result;
-    if (!clip_) return result;
+    for (auto* mc : allClips_) {
+        int ch = mc->getMidiChannel().getChannelNumber();
+        if (hiddenChannels_.count(ch)) continue;
 
-    auto& seq = clip_->getSequence();
-    for (auto* note : seq.getNotes()) {
-        double barX = note->getStartBeat().inBeats() * pixelsPerBeat_ - scrollOffset_;
-        double barW = std::max(4.0, note->getLengthBeats().inBeats() * pixelsPerBeat_);
-        if (x >= barX && x <= barX + barW)
-            result.push_back(note);
+        auto& seq = mc->getSequence();
+        for (auto* note : seq.getNotes()) {
+            double barX = note->getStartBeat().inBeats() * pixelsPerBeat_ - scrollOffset_;
+            double barW = std::max(4.0, note->getLengthBeats().inBeats() * pixelsPerBeat_);
+            if (x >= barX && x <= barX + barW)
+                result.push_back(note);
+        }
     }
     return result;
 }
@@ -47,22 +64,30 @@ void VelocityLane::paintEvent(QPaintEvent*)
 
     painter.fillRect(rect(), theme.pianoRollBackground);
 
-    if (!clip_) return;
+    if (allClips_.empty()) return;
 
-    auto& seq = clip_->getSequence();
     int h = height();
 
-    for (auto* note : seq.getNotes()) {
-        double x = note->getStartBeat().inBeats() * pixelsPerBeat_ - scrollOffset_;
-        double w = std::max(3.0, note->getLengthBeats().inBeats() * pixelsPerBeat_);
-        double barH = std::max(2.0, (note->getVelocity() / 127.0) * (h - 4));
+    for (auto* mc : allClips_) {
+        int ch = mc->getMidiChannel().getChannelNumber();
+        if (ch < 1) ch = 1;
+        if (hiddenChannels_.count(ch)) continue;
 
-        if (x + w < 0 || x > width()) continue;
+        QColor barColor = channelColor(ch);
+        auto& seq = mc->getSequence();
 
-        QRectF bar(x, h - barH - 2, w, barH);
-        painter.fillRect(bar, theme.pianoRollVelocityBar);
-        painter.setPen(QPen(theme.pianoRollVelocityBar.darker(130), 0.5));
-        painter.drawRect(bar);
+        for (auto* note : seq.getNotes()) {
+            double x = note->getStartBeat().inBeats() * pixelsPerBeat_ - scrollOffset_;
+            double w = std::max(3.0, note->getLengthBeats().inBeats() * pixelsPerBeat_);
+            double barH = std::max(2.0, (note->getVelocity() / 127.0) * (h - 4));
+
+            if (x + w < 0 || x > width()) continue;
+
+            QRectF bar(x, h - barH - 2, w, barH);
+            painter.fillRect(bar, barColor);
+            painter.setPen(QPen(barColor.darker(130), 0.5));
+            painter.drawRect(bar);
+        }
     }
 
     painter.setPen(QPen(theme.pianoRollGrid, 0.5));
@@ -77,7 +102,7 @@ void VelocityLane::mousePressEvent(QMouseEvent* event)
         int vel = static_cast<int>(
             127.0 * (1.0 - event->position().y() / height()));
         vel = std::clamp(vel, 1, 127);
-        auto* um = clip_ ? &clip_->edit.getUndoManager() : nullptr;
+        auto* um = primaryClip_ ? &primaryClip_->edit.getUndoManager() : nullptr;
         for (auto* note : draggingNotes_)
             note->setVelocity(vel, um);
         update();
@@ -99,7 +124,7 @@ void VelocityLane::mouseMoveEvent(QMouseEvent* event)
     int vel = static_cast<int>(
         127.0 * (1.0 - event->position().y() / height()));
     vel = std::clamp(vel, 1, 127);
-    auto* um = clip_ ? &clip_->edit.getUndoManager() : nullptr;
+    auto* um = primaryClip_ ? &primaryClip_->edit.getUndoManager() : nullptr;
     for (auto* note : draggingNotes_)
         note->setVelocity(vel, um);
     update();

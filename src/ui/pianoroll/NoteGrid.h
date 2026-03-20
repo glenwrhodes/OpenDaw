@@ -50,6 +50,11 @@ public:
     explicit NoteGrid(QWidget* parent = nullptr);
 
     void setClip(te::MidiClip* clip);
+    void setClips(te::MidiClip* primary, const std::vector<te::MidiClip*>& all);
+    void setPrimaryClip(te::MidiClip* clip);
+    void setChannelVisible(int ch, bool visible);
+    te::MidiClip* clip() const { return primaryClip_; }
+
     void setPixelsPerBeat(double ppb);
     void setNoteRowHeight(double h);
     double pixelsPerBeat() const { return pixelsPerBeat_; }
@@ -103,18 +108,22 @@ public:
     void setTypingCursorBeat(double beat);
     double typingCursorBeat() const { return typingCursorBeat_; }
 
+    void setEnsureClipCallback(std::function<te::MidiClip*()> cb) { ensureClipCb_ = std::move(cb); }
+
 signals:
     void notesChanged();
     void zoomChanged();
     void verticalScrollChanged(int value);
     void horizontalScrollChanged(int value);
     void editModeRequested();
+    void drawModeRequested();
     void musicalTypingToggled(bool enabled);
     void stepRecordToggled(bool enabled);
     void typingCursorMoved(double beat);
 
 protected:
     void mousePressEvent(QMouseEvent* event) override;
+    void mouseDoubleClickEvent(QMouseEvent* event) override;
     void mouseMoveEvent(QMouseEvent* event) override;
     void mouseReleaseEvent(QMouseEvent* event) override;
     void wheelEvent(QWheelEvent* event) override;
@@ -140,7 +149,9 @@ private:
     void advanceCursor();
     void updateTypingCursorVisual();
 
-    te::MidiClip* clip_ = nullptr;
+    te::MidiClip* primaryClip_ = nullptr;
+    std::vector<te::MidiClip*> allClips_;
+    std::set<int> hiddenChannels_;
     NoteGridScene* scene_;
     GridSnapper snapper_;
 
@@ -185,6 +196,8 @@ private:
 
     // Note preview tracking
     std::set<int> activePreviewNotes_;
+
+    std::function<te::MidiClip*()> ensureClipCb_;
 };
 
 } // namespace freedaw

@@ -35,9 +35,12 @@ public:
                         double* pixelsPerBeatPtr, double* trackHeightPtr,
                         int trackCount,
                         std::function<void()> requestRefresh);
+    void setLinkedChannelCount(int count) { linkedChannelCount_ = count; }
+    int linkedChannelCount() const { return linkedChannelCount_; }
     void updateGeometry(double pixelsPerBeat, double trackHeight, double scrollY);
     void loadWaveform(int numPoints);
     void loadMidiPreview();
+    void loadMidiPreviewFromClips(const std::vector<te::MidiClip*>& clips);
 
     enum { Type = QGraphicsItem::UserType + 1 };
     int type() const override { return Type; }
@@ -59,6 +62,7 @@ private:
     te::Clip* clip_ = nullptr;
     int trackIndex_ = 0;
     bool isMidiClip_ = false;
+    int linkedChannelCount_ = 1;
 
     std::vector<float> waveMin_;
     std::vector<float> waveMax_;

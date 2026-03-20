@@ -22,6 +22,7 @@
 #include <cmath>
 #include <random>
 #include <algorithm>
+#include <map>
 #include <unordered_set>
 
 namespace freedaw {
@@ -68,7 +69,33 @@ NoteGrid::NoteGrid(QWidget* parent) : QGraphicsView(parent)
 void NoteGrid::setClip(te::MidiClip* clip)
 {
     stopAllPreviews();
-    clip_ = clip;
+    primaryClip_ = clip;
+    allClips_.clear();
+    if (clip)
+        allClips_.push_back(clip);
+    rebuildNotes();
+}
+
+void NoteGrid::setClips(te::MidiClip* primary, const std::vector<te::MidiClip*>& all)
+{
+    stopAllPreviews();
+    primaryClip_ = primary;
+    allClips_ = all;
+    rebuildNotes();
+}
+
+void NoteGrid::setPrimaryClip(te::MidiClip* clip)
+{
+    primaryClip_ = clip;
+    rebuildNotes();
+}
+
+void NoteGrid::setChannelVisible(int ch, bool visible)
+{
+    if (visible)
+        hiddenChannels_.erase(ch);
+    else
+        hiddenChannels_.insert(ch);
     rebuildNotes();
 }
 
@@ -99,10 +126,10 @@ void NoteGrid::setEditMode(EditMode mode)
 void NoteGrid::updateSceneSize()
 {
     double clipLenBeats = 16.0;
-    if (clip_) {
-        auto& ts = clip_->edit.tempoSequence;
-        double startBeat = ts.toBeats(clip_->getPosition().getStart()).inBeats();
-        double endBeat = ts.toBeats(clip_->getPosition().getEnd()).inBeats();
+    if (primaryClip_) {
+        auto& ts = primaryClip_->edit.tempoSequence;
+        double startBeat = ts.toBeats(primaryClip_->getPosition().getStart()).inBeats();
+        double endBeat = ts.toBeats(primaryClip_->getPosition().getEnd()).inBeats();
         clipLenBeats = endBeat - startBeat;
     }
     double totalBeats = std::max(clipLenBeats + 16.0, 32.0);
@@ -128,10 +155,10 @@ void NoteGrid::drawBackground()
     if (clipRegionRight_) { scene_->removeItem(clipRegionRight_); delete clipRegionRight_; clipRegionRight_ = nullptr; }
 
     double clipLenBeats = 4.0;
-    if (clip_) {
-        auto& ts = clip_->edit.tempoSequence;
-        double startBeat = ts.toBeats(clip_->getPosition().getStart()).inBeats();
-        double endBeat = ts.toBeats(clip_->getPosition().getEnd()).inBeats();
+    if (primaryClip_) {
+        auto& ts = primaryClip_->edit.tempoSequence;
+        double startBeat = ts.toBeats(primaryClip_->getPosition().getStart()).inBeats();
+        double endBeat = ts.toBeats(primaryClip_->getPosition().getEnd()).inBeats();
         clipLenBeats = endBeat - startBeat;
     }
     double clipEndX = clipLenBeats * pixelsPerBeat_;
@@ -182,14 +209,14 @@ void NoteGrid::drawBackground()
 
 void NoteGrid::expandClipToFitNotes()
 {
-    if (!clip_) return;
+    if (!primaryClip_) return;
 
-    auto& ts = clip_->edit.tempoSequence;
-    double clipStartBeat = ts.toBeats(clip_->getPosition().getStart()).inBeats();
-    double clipEndBeat = ts.toBeats(clip_->getPosition().getEnd()).inBeats();
+    auto& ts = primaryClip_->edit.tempoSequence;
+    double clipStartBeat = ts.toBeats(primaryClip_->getPosition().getStart()).inBeats();
+    double clipEndBeat = ts.toBeats(primaryClip_->getPosition().getEnd()).inBeats();
     double clipLenBeats = clipEndBeat - clipStartBeat;
 
-    auto& seq = clip_->getSequence();
+    auto& seq = primaryClip_->getSequence();
     double maxNoteEnd = clipLenBeats;
     bool needsExpand = false;
 
@@ -204,7 +231,7 @@ void NoteGrid::expandClipToFitNotes()
     if (needsExpand) {
         double newEndAbsBeat = clipStartBeat + maxNoteEnd;
         auto newEndTime = ts.toTime(tracktion::BeatPosition::fromBeats(newEndAbsBeat));
-        clip_->setEnd(newEndTime, false);
+        primaryClip_->setEnd(newEndTime, false);
         updateSceneSize();
     }
 }
@@ -232,23 +259,37 @@ void NoteGrid::rebuildNotes()
     expandClipToFitNotes();
     drawBackground();
 
-    if (!clip_) return;
+    if (!primaryClip_ || allClips_.empty()) return;
 
-    auto& seq = clip_->getSequence();
-    for (auto* note : seq.getNotes()) {
-        auto* item = new NoteItem(note, clip_, pixelsPerBeat_, noteRowHeight_, 0);
-        item->updateGeometry(pixelsPerBeat_, noteRowHeight_, 0, TOTAL_NOTES);
-        item->setGridSnapper(&snapper_);
-        item->setRefreshCallback([this]() {
-            QTimer::singleShot(0, this, [this]() {
-                expandClipToFitNotes();
-                rebuildNotes();
-                emit notesChanged();
+    auto& ts = primaryClip_->edit.tempoSequence;
+    double primaryStartBeat = ts.toBeats(primaryClip_->getPosition().getStart()).inBeats();
+
+    for (auto* mc : allClips_) {
+        int ch = mc->getMidiChannel().getChannelNumber();
+        if (ch < 1) ch = 1;
+        if (hiddenChannels_.count(ch)) continue;
+
+        double clipStartBeat = ts.toBeats(mc->getPosition().getStart()).inBeats();
+        double beatOffset = clipStartBeat - primaryStartBeat;
+        bool isPrimary = (mc == primaryClip_);
+
+        auto& seq = mc->getSequence();
+        for (auto* note : seq.getNotes()) {
+            auto* item = new NoteItem(note, mc, pixelsPerBeat_, noteRowHeight_, 0, ch);
+            item->updateGeometry(pixelsPerBeat_, noteRowHeight_, 0, TOTAL_NOTES, beatOffset);
+            item->setGridSnapper(&snapper_);
+            item->setActiveChannel(isPrimary);
+            item->setRefreshCallback([this]() {
+                QTimer::singleShot(0, this, [this]() {
+                    expandClipToFitNotes();
+                    rebuildNotes();
+                    emit notesChanged();
+                });
             });
-        });
-        item->setZValue(2);
-        scene_->addItem(item);
-        noteItems_.push_back(item);
+            item->setZValue(isPrimary ? 2.0 : 1.5);
+            scene_->addItem(item);
+            noteItems_.push_back(item);
+        }
     }
 
     // Restore selection: either from copy-drag pending, or from saved pointers
@@ -306,6 +347,29 @@ void NoteGrid::mousePressEvent(QMouseEvent* event)
     QGraphicsView::mousePressEvent(event);
 }
 
+void NoteGrid::mouseDoubleClickEvent(QMouseEvent* event)
+{
+    if (editMode_ == EditMode::Edit && event->button() == Qt::LeftButton) {
+        QPointF scenePos = mapToScene(event->pos());
+        const auto hitItems = scene_->items(scenePos);
+        bool hitNote = false;
+        for (auto* item : hitItems) {
+            if (dynamic_cast<NoteItem*>(item)) {
+                hitNote = true;
+                break;
+            }
+        }
+        if (!hitNote) {
+            setEditMode(EditMode::Draw);
+            emit drawModeRequested();
+            beginDrawPreview(scenePos);
+            event->accept();
+            return;
+        }
+    }
+    QGraphicsView::mouseDoubleClickEvent(event);
+}
+
 void NoteGrid::mouseMoveEvent(QMouseEvent* event)
 {
     if (editMode_ == EditMode::Draw && isDrawingNote_) {
@@ -353,17 +417,19 @@ void NoteGrid::wheelEvent(QWheelEvent* event)
 
 void NoteGrid::deleteSelectedNotes()
 {
-    if (!clip_) return;
-    auto& seq = clip_->getSequence();
-    auto* um = &clip_->edit.getUndoManager();
+    if (!primaryClip_) return;
+    auto* um = &primaryClip_->edit.getUndoManager();
 
-    std::vector<te::MidiNote*> toDelete;
+    std::map<te::MidiClip*, std::vector<te::MidiNote*>> clipNotes;
     for (auto* item : noteItems_) {
         if (item->isSelected())
-            toDelete.push_back(item->note());
+            clipNotes[item->clip()].push_back(item->note());
     }
-    for (auto* note : toDelete)
-        seq.removeNote(*note, um);
+    for (auto& [clip, notes] : clipNotes) {
+        auto& seq = clip->getSequence();
+        for (auto* note : notes)
+            seq.removeNote(*note, um);
+    }
 
     rebuildNotes();
     emit notesChanged();
@@ -385,7 +451,7 @@ void NoteGrid::deselectAllNotes()
 void NoteGrid::copySelectedNotes()
 {
     clipboard_.clear();
-    if (!clip_) return;
+    if (!primaryClip_) return;
 
     double minBeat = 1e9;
     std::vector<NoteItem*> selected;
@@ -415,9 +481,11 @@ void NoteGrid::cutSelectedNotes()
 
 void NoteGrid::pasteNotes(double atBeat)
 {
-    if (!clip_ || clipboard_.empty()) return;
-    auto& seq = clip_->getSequence();
-    auto* um = &clip_->edit.getUndoManager();
+    if (!primaryClip_ && ensureClipCb_)
+        primaryClip_ = ensureClipCb_();
+    if (!primaryClip_ || clipboard_.empty()) return;
+    auto& seq = primaryClip_->getSequence();
+    auto* um = &primaryClip_->edit.getUndoManager();
 
     um->beginNewTransaction("Paste Notes");
 
@@ -439,7 +507,7 @@ void NoteGrid::pasteNotes(double atBeat)
 
 void NoteGrid::duplicateSelectedNotes()
 {
-    if (!clip_) return;
+    if (!primaryClip_) return;
     copySelectedNotes();
     if (clipboard_.empty()) return;
 
@@ -465,8 +533,8 @@ void NoteGrid::duplicateSelectedNotes()
 
 void NoteGrid::transposeSelected(int semitones)
 {
-    if (!clip_) return;
-    auto* um = &clip_->edit.getUndoManager();
+    if (!primaryClip_) return;
+    auto* um = &primaryClip_->edit.getUndoManager();
     um->beginNewTransaction("Transpose");
 
     bool any = false;
@@ -533,7 +601,7 @@ void NoteGrid::quantizeNotes()
 
 void NoteGrid::showQuantizeDialog()
 {
-    if (!clip_) return;
+    if (!primaryClip_) return;
 
     auto* dlg = new QDialog(this);
     dlg->setWindowTitle("Quantize");
@@ -601,7 +669,7 @@ void NoteGrid::showQuantizeDialog()
         bool quantizeLen = quantizeLengthCheck->isChecked();
         dlg->accept();
 
-        auto* um = &clip_->edit.getUndoManager();
+        auto* um = &primaryClip_->edit.getUndoManager();
         um->beginNewTransaction("Quantize Notes");
 
         bool hasSelection = false;
@@ -634,7 +702,7 @@ void NoteGrid::showQuantizeDialog()
 
 void NoteGrid::reverseSelectedNotes()
 {
-    if (!clip_) return;
+    if (!primaryClip_) return;
 
     struct NoteData { te::MidiNote* note; double start; double length; };
     std::vector<NoteData> sel;
@@ -652,7 +720,7 @@ void NoteGrid::reverseSelectedNotes()
         maxEnd = std::max(maxEnd, d.start + d.length);
     }
 
-    auto* um = &clip_->edit.getUndoManager();
+    auto* um = &primaryClip_->edit.getUndoManager();
     um->beginNewTransaction("Reverse Notes");
     for (auto& d : sel) {
         double newStart = maxEnd - (d.start - minStart) - d.length;
@@ -668,7 +736,7 @@ void NoteGrid::reverseSelectedNotes()
 
 void NoteGrid::showSwingDialog()
 {
-    if (!clip_) return;
+    if (!primaryClip_) return;
 
     auto* dlg = new QDialog(this);
     dlg->setWindowTitle("Swing");
@@ -716,7 +784,7 @@ void NoteGrid::showSwingDialog()
         if (grid <= 0.0) grid = 0.25;
         double swingOffset = grid * 0.5 * swingPct;
 
-        auto* um = &clip_->edit.getUndoManager();
+        auto* um = &primaryClip_->edit.getUndoManager();
         um->beginNewTransaction("Swing Quantize");
 
         bool hasSelection = false;
@@ -746,7 +814,7 @@ void NoteGrid::showSwingDialog()
 
 void NoteGrid::showHumanizeDialog()
 {
-    if (!clip_) return;
+    if (!primaryClip_) return;
 
     auto* dlg = new QDialog(this);
     dlg->setWindowTitle("Humanize");
@@ -791,7 +859,7 @@ void NoteGrid::showHumanizeDialog()
         int velRange = velSpin->value();
         dlg->accept();
 
-        auto* um = &clip_->edit.getUndoManager();
+        auto* um = &primaryClip_->edit.getUndoManager();
         um->beginNewTransaction("Humanize");
 
         std::mt19937 rng(std::random_device{}());
@@ -829,7 +897,7 @@ void NoteGrid::showHumanizeDialog()
 
 void NoteGrid::legatoSelectedNotes()
 {
-    if (!clip_) return;
+    if (!primaryClip_) return;
 
     struct NoteData { te::MidiNote* note; double start; };
     std::vector<NoteData> sel;
@@ -842,7 +910,7 @@ void NoteGrid::legatoSelectedNotes()
     std::sort(sel.begin(), sel.end(),
               [](auto& a, auto& b) { return a.start < b.start; });
 
-    auto* um = &clip_->edit.getUndoManager();
+    auto* um = &primaryClip_->edit.getUndoManager();
     um->beginNewTransaction("Legato");
 
     for (size_t i = 0; i + 1 < sel.size(); ++i) {
@@ -861,8 +929,8 @@ void NoteGrid::legatoSelectedNotes()
 
 void NoteGrid::playNotePreview(int noteNumber, int velocity)
 {
-    if (!clip_) return;
-    auto* track = clip_->getAudioTrack();
+    if (!primaryClip_) return;
+    auto* track = primaryClip_->getAudioTrack();
     if (!track) return;
 
     noteNumber = std::clamp(noteNumber, 0, 127);
@@ -878,8 +946,8 @@ void NoteGrid::playNotePreview(int noteNumber, int velocity)
 
 void NoteGrid::stopNotePreview(int noteNumber)
 {
-    if (!clip_ || !activePreviewNotes_.count(noteNumber)) return;
-    auto* track = clip_->getAudioTrack();
+    if (!primaryClip_ || !activePreviewNotes_.count(noteNumber)) return;
+    auto* track = primaryClip_->getAudioTrack();
     if (!track) return;
 
     auto msg = juce::MidiMessage::noteOff(1, noteNumber);
@@ -889,11 +957,11 @@ void NoteGrid::stopNotePreview(int noteNumber)
 
 void NoteGrid::stopAllPreviews()
 {
-    if (!clip_) {
+    if (!primaryClip_) {
         activePreviewNotes_.clear();
         return;
     }
-    auto* track = clip_->getAudioTrack();
+    auto* track = primaryClip_->getAudioTrack();
     if (!track) {
         activePreviewNotes_.clear();
         return;
@@ -952,9 +1020,11 @@ int NoteGrid::musicalTypingKeyToPitch(int qtKey) const
 
 void NoteGrid::insertNoteAtCursor(int pitch)
 {
-    if (!clip_) return;
-    auto& seq = clip_->getSequence();
-    auto* um = &clip_->edit.getUndoManager();
+    if (!primaryClip_ && ensureClipCb_)
+        primaryClip_ = ensureClipCb_();
+    if (!primaryClip_) return;
+    auto& seq = primaryClip_->getSequence();
+    auto* um = &primaryClip_->edit.getUndoManager();
 
     double length = snapper_.gridIntervalBeats();
     if (length <= 0.0) length = 0.25;
@@ -1187,7 +1257,7 @@ void NoteGrid::contextMenuEvent(QContextMenuEvent* event)
     stepAction->setChecked(stepRecordEnabled_);
     connect(stepAction, &QAction::toggled, this, &NoteGrid::setStepRecordEnabled);
 
-    if (clip_) {
+    if (primaryClip_) {
         menu.addSeparator();
         menu.addAction("Add Note Here", [this]() {
             double beat = lastContextMenuBeat_;
@@ -1198,8 +1268,8 @@ void NoteGrid::contextMenuEvent(QContextMenuEvent* event)
             pitch = std::clamp(pitch, 0, 127);
 
             double length = std::max(0.25, snapper_.gridIntervalBeats());
-            auto& seq = clip_->getSequence();
-            auto* um = &clip_->edit.getUndoManager();
+            auto& seq = primaryClip_->getSequence();
+            auto* um = &primaryClip_->edit.getUndoManager();
             seq.addNote(pitch,
                         tracktion::BeatPosition::fromBeats(beat),
                         tracktion::BeatDuration::fromBeats(length),
@@ -1236,7 +1306,7 @@ void NoteGrid::showEvent(QShowEvent* event)
 
 void NoteGrid::beginDrawPreview(const QPointF& scenePos)
 {
-    if (!clip_) return;
+    if (!primaryClip_) return;
 
     double beat = scenePos.x() / pixelsPerBeat_;
     beat = snapper_.snapBeat(beat);
@@ -1294,7 +1364,10 @@ void NoteGrid::updateDrawPreview(const QPointF& scenePos)
 
 void NoteGrid::commitDrawPreview(const QPointF& scenePos)
 {
-    if (!clip_ || !isDrawingNote_) {
+    if (!primaryClip_ && ensureClipCb_)
+        primaryClip_ = ensureClipCb_();
+
+    if (!primaryClip_ || !isDrawingNote_) {
         clearDrawPreview();
         return;
     }
@@ -1308,8 +1381,8 @@ void NoteGrid::commitDrawPreview(const QPointF& scenePos)
     const double rightBeat = std::max(drawStartBeat_, drawCurrentBeat_);
     const double lengthBeats = std::max(minLength, rightBeat - leftBeat);
 
-    auto& seq = clip_->getSequence();
-    auto* um = &clip_->edit.getUndoManager();
+    auto& seq = primaryClip_->getSequence();
+    auto* um = &primaryClip_->edit.getUndoManager();
     seq.addNote(drawPitch_,
                 tracktion::BeatPosition::fromBeats(leftBeat),
                 tracktion::BeatDuration::fromBeats(lengthBeats),

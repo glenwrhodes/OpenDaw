@@ -714,6 +714,138 @@ bool EditManager::isClipValid(te::Clip* clip) const
     return false;
 }
 
+te::MidiClip* EditManager::addLinkedMidiChannel(te::AudioTrack& track,
+                                                 te::MidiClip& referenceClip,
+                                                 int midiChannel,
+                                                 const QString& displayName)
+{
+    if (!edit_) return nullptr;
+
+    auto startTime = referenceClip.getPosition().getStart();
+    auto endTime = referenceClip.getPosition().getEnd();
+
+    auto clipRef = track.insertMIDIClip(
+        juce::String("MIDI Ch ") + juce::String(midiChannel),
+        tracktion::TimeRange(startTime, endTime),
+        nullptr);
+
+    auto* newClip = clipRef.get();
+    if (!newClip) return nullptr;
+
+    newClip->setMidiChannel(te::MidiChannel(std::clamp(midiChannel, 1, 16)));
+
+    if (!displayName.isEmpty())
+        setChannelName(*newClip, displayName);
+
+    markDirtyAndNotify();
+    return newClip;
+}
+
+std::vector<te::MidiClip*> EditManager::getLinkedMidiClips(te::AudioTrack* track,
+                                                            te::MidiClip* referenceClip) const
+{
+    std::vector<te::MidiClip*> result;
+    if (!track || !referenceClip) return result;
+
+    auto refStart = referenceClip->getPosition().getStart();
+    auto refEnd = referenceClip->getPosition().getEnd();
+
+    for (auto* clip : track->getClips()) {
+        auto* mc = dynamic_cast<te::MidiClip*>(clip);
+        if (!mc) continue;
+
+        auto clipStart = mc->getPosition().getStart();
+        auto clipEnd = mc->getPosition().getEnd();
+        bool overlaps = clipStart < refEnd && clipEnd > refStart;
+        if (overlaps)
+            result.push_back(mc);
+    }
+
+    std::sort(result.begin(), result.end(), [](te::MidiClip* a, te::MidiClip* b) {
+        return a->getMidiChannel().getChannelNumber()
+             < b->getMidiChannel().getChannelNumber();
+    });
+
+    return result;
+}
+
+bool EditManager::isLinkedSecondary(te::MidiClip* clip) const
+{
+    if (!clip) return false;
+    auto* track = clip->getAudioTrack();
+    if (!track) return false;
+
+    auto clipStart = clip->getPosition().getStart();
+    auto clipEnd = clip->getPosition().getEnd();
+    int clipCh = clip->getMidiChannel().getChannelNumber();
+
+    for (auto* c : track->getClips()) {
+        auto* mc = dynamic_cast<te::MidiClip*>(c);
+        if (!mc || mc == clip) continue;
+
+        auto otherStart = mc->getPosition().getStart();
+        auto otherEnd = mc->getPosition().getEnd();
+        bool overlaps = otherStart < clipEnd && otherEnd > clipStart;
+        if (overlaps && mc->getMidiChannel().getChannelNumber() < clipCh)
+            return true;
+    }
+    return false;
+}
+
+int EditManager::linkedChannelCount(te::MidiClip* clip) const
+{
+    if (!clip) return 1;
+    auto* track = clip->getAudioTrack();
+    if (!track) return 1;
+
+    auto linked = getLinkedMidiClips(track, clip);
+    return std::max(1, static_cast<int>(linked.size()));
+}
+
+void EditManager::propagateClipPosition(te::MidiClip& primary)
+{
+    auto* track = primary.getAudioTrack();
+    if (!track) return;
+
+    auto startTime = primary.getPosition().getStart();
+    auto endTime = primary.getPosition().getEnd();
+
+    for (auto* c : track->getClips()) {
+        auto* mc = dynamic_cast<te::MidiClip*>(c);
+        if (!mc || mc == &primary) continue;
+
+        auto otherStart = mc->getPosition().getStart();
+        auto otherEnd = mc->getPosition().getEnd();
+        bool wasLinked = (otherStart < endTime && otherEnd > startTime)
+                      || (std::abs((otherStart - startTime).inSeconds()) < 0.01);
+
+        if (wasLinked) {
+            mc->setStart(startTime, false, true);
+            mc->setEnd(endTime, false);
+        }
+    }
+}
+
+void EditManager::setChannelName(te::MidiClip& clip, const QString& name)
+{
+    auto* um = edit_ ? &edit_->getUndoManager() : nullptr;
+    clip.state.setProperty(juce::Identifier("channelDisplayName"),
+                           juce::String(name.toStdString()), um);
+}
+
+QString EditManager::getChannelName(te::MidiClip* clip) const
+{
+    if (!clip) return {};
+    int ch = clip->getMidiChannel().getChannelNumber();
+    if (ch < 1) ch = 1;
+    auto val = clip->state.getProperty(juce::Identifier("channelDisplayName"));
+    if (val.isVoid() || val.toString().isEmpty())
+        return QString("Ch %1").arg(ch);
+    return QString("%1 (ch%2)")
+        .arg(QString::fromStdString(val.toString().toStdString()))
+        .arg(ch);
+}
+
 void EditManager::enableAllWaveInputDevices()
 {
     auto& dm = audioEngine_.engine().getDeviceManager();

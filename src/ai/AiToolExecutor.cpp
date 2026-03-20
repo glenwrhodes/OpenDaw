@@ -1008,6 +1008,89 @@ void AiToolExecutor::registerHandlers()
         editMgr_->redo();
         return ok(id, "Redo performed.");
     };
+
+    handlers_["setup_midi_channels"] = [this](const QJsonObject& input, const QString& id) -> AiToolResult {
+        auto* track = resolveTrack(input["track"]);
+        if (!track) return err(id, "Track not found.");
+        if (!editMgr_->isMidiTrack(track))
+            return err(id, "Track is not a MIDI track.");
+
+        te::MidiClip* refClip = nullptr;
+        for (auto* clip : track->getClips()) {
+            if (auto* mc = dynamic_cast<te::MidiClip*>(clip)) {
+                refClip = mc;
+                break;
+            }
+        }
+        if (!refClip) {
+            refClip = editMgr_->addMidiClipToTrack(*track, 0.0, 16.0);
+            if (!refClip) return err(id, "Failed to create reference MIDI clip.");
+        }
+
+        QJsonArray channels = input["channels"].toArray();
+        QJsonArray created;
+        for (const auto& chVal : channels) {
+            QJsonObject chObj = chVal.toObject();
+            int ch = chObj["channel"].toInt(1);
+            QString name = chObj["name"].toString();
+
+            if (ch == refClip->getMidiChannel().getChannelNumber()) {
+                if (!name.isEmpty())
+                    editMgr_->setChannelName(*refClip, name);
+                QJsonObject entry;
+                entry["channel"] = ch;
+                entry["name"] = name;
+                entry["status"] = "existing";
+                created.append(entry);
+                continue;
+            }
+
+            auto* newClip = editMgr_->addLinkedMidiChannel(*track, *refClip, ch, name);
+            QJsonObject entry;
+            entry["channel"] = ch;
+            entry["name"] = name;
+            entry["status"] = newClip ? "created" : "failed";
+            created.append(entry);
+        }
+
+        emit editMgr_->editChanged();
+        return ok(id, created);
+    };
+
+    handlers_["set_channel_name"] = [this](const QJsonObject& input, const QString& id) -> AiToolResult {
+        auto* track = resolveTrack(input["track"]);
+        if (!track) return err(id, "Track not found.");
+        int ch = input["channel"].toInt(0);
+        QString name = input["name"].toString();
+        if (ch < 1 || ch > 16) return err(id, "Channel must be 1-16.");
+        if (name.isEmpty()) return err(id, "Name cannot be empty.");
+
+        for (auto* clip : track->getClips()) {
+            if (auto* mc = dynamic_cast<te::MidiClip*>(clip)) {
+                if (mc->getMidiChannel().getChannelNumber() == ch) {
+                    editMgr_->setChannelName(*mc, name);
+                    return ok(id, QString("Channel %1 renamed to '%2'.").arg(ch).arg(name));
+                }
+            }
+        }
+        return err(id, QString("No MIDI clip on channel %1 found.").arg(ch));
+    };
+
+    handlers_["get_channel_names"] = [this](const QJsonObject& input, const QString& id) -> AiToolResult {
+        auto* track = resolveTrack(input["track"]);
+        if (!track) return err(id, "Track not found.");
+
+        QJsonArray result;
+        for (auto* clip : track->getClips()) {
+            if (auto* mc = dynamic_cast<te::MidiClip*>(clip)) {
+                QJsonObject entry;
+                entry["channel"] = mc->getMidiChannel().getChannelNumber();
+                entry["name"] = editMgr_->getChannelName(mc);
+                result.append(entry);
+            }
+        }
+        return ok(id, result);
+    };
 }
 
 // ── Public API ──────────────────────────────────────────────────────────────
