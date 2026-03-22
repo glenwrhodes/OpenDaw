@@ -48,6 +48,7 @@ EditManager::EditManager(AudioEngine& engine, QObject* parent)
 EditManager::~EditManager()
 {
     stopAutosave();
+    teardownCurrentEdit();
 }
 
 void EditManager::teardownCurrentEdit()

@@ -152,6 +152,7 @@ bool MainWindow::maybeSaveBeforeAction()
 void MainWindow::closeEvent(QCloseEvent* event)
 {
     if (maybeSaveBeforeAction()) {
+        PluginEditorWindow::closeAll();
         editMgr_.stopAutosave();
         editMgr_.clearAutosave();
         event->accept();
