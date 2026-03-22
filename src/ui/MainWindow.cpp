@@ -1,4 +1,4 @@
-﻿#include "MainWindow.h"
+#include "MainWindow.h"
 #include "ui/effects/VstSelectorDialog.h"
 #include "ui/effects/PluginEditorWindow.h"
 #include "ui/pianoroll/PianoRollEditor.h"
@@ -197,51 +197,84 @@ void MainWindow::applyGlobalStyle()
 {
     auto& theme = ThemeManager::instance().current();
 
+    QString hoverBorder = QColor(theme.border).lighter(140).name();
+
     QString globalSS = QString(
         "QMainWindow { background: %1; }"
         "QWidget { background: %1; color: %3; }"
+
         "QMenuBar { background: %2; color: %3; border-bottom: 1px solid %4; }"
-        "QMenuBar::item { background: transparent; }"
+        "QMenuBar::item { background: transparent; padding: 4px 10px; border-radius: 4px; }"
         "QMenuBar::item:selected { background: %5; }"
-        "QMenu { background: %2; color: %3; border: 1px solid %4; }"
-        "QMenu::item:selected { background: %5; }"
-        "QToolBar { background: %2; border: none; spacing: 4px; }"
+        "QMenu { background: %2; color: %3; border: 1px solid %4; border-radius: 4px; "
+        "  padding: 4px 0; }"
+        "QMenu::item { padding: 5px 24px; }"
+        "QMenu::item:selected { background: %5; border-radius: 3px; margin: 0 4px; }"
+        "QMenu::separator { height: 1px; background: %4; margin: 4px 8px; }"
+
+        "QToolBar { background: %2; border: none; spacing: 6px; }"
         "QToolButton { background: transparent; color: %3; border: 1px solid transparent; "
-        "  border-radius: 3px; padding: 3px 6px; }"
+        "  border-radius: 5px; padding: 4px 8px; }"
         "QToolButton:hover { background: %6; border: 1px solid %4; }"
         "QToolButton:pressed { background: %5; }"
+
         "QDockWidget { background: %1; color: %3; font-size: 11px; }"
-        "QDockWidget::title { background: %2; padding: 4px; border: 1px solid %4; }"
+        "QDockWidget::title { background: %2; padding: 6px 8px; "
+        "  border: none; border-bottom: 1px solid %4; font-weight: bold; }"
         "QDockWidget > QWidget { background: %1; }"
+
+        "QTabBar { background: %1; }"
+        "QTabBar::tab { background: %2; color: %7; border: 1px solid %4; "
+        "  border-bottom: none; border-top-left-radius: 5px; border-top-right-radius: 5px; "
+        "  padding: 5px 14px; margin-right: 2px; font-size: 11px; }"
+        "QTabBar::tab:selected { background: %1; color: %3; "
+        "  border-bottom: 2px solid %5; font-weight: bold; }"
+        "QTabBar::tab:hover:!selected { background: %6; color: %3; }"
+
         "QStatusBar { background: %2; color: %7; border-top: 1px solid %4; }"
+
         "QScrollArea { background: %1; border: none; }"
         "QScrollArea > QWidget > QWidget { background: %1; }"
         "QScrollBar:horizontal { background: %1; height: 10px; border: none; }"
-        "QScrollBar::handle:horizontal { background: %4; border-radius: 4px; min-width: 20px; }"
+        "QScrollBar::handle:horizontal { background: %4; border-radius: 5px; min-width: 24px; }"
+        "QScrollBar::handle:horizontal:hover { background: %6; }"
         "QScrollBar:vertical { background: %1; width: 10px; border: none; }"
-        "QScrollBar::handle:vertical { background: %4; border-radius: 4px; min-height: 20px; }"
+        "QScrollBar::handle:vertical { background: %4; border-radius: 5px; min-height: 24px; }"
+        "QScrollBar::handle:vertical:hover { background: %6; }"
         "QScrollBar::add-line, QScrollBar::sub-line { height: 0; width: 0; }"
         "QScrollBar::add-page, QScrollBar::sub-page { background: %1; }"
+
         "QSpinBox, QDoubleSpinBox { background: %1; color: %3; border: 1px solid %4; "
-        "  border-radius: 2px; padding: 2px 6px; min-height: 18px; }"
+        "  border-radius: 4px; padding: 3px 6px; min-height: 20px; }"
+        "QSpinBox:hover, QDoubleSpinBox:hover { border-color: " + hoverBorder + "; }"
         "QSpinBox::up-button, QDoubleSpinBox::up-button { width: 16px; }"
         "QSpinBox::down-button, QDoubleSpinBox::down-button { width: 16px; }"
+
         "QComboBox { background: %1; color: %3; border: 1px solid %4; "
-        "  border-radius: 2px; padding: 2px 6px; min-height: 18px; }"
-        "QComboBox::drop-down { border: none; width: 18px; }"
-        "QComboBox QAbstractItemView { background: %2; color: %3; selection-background-color: %5; }"
+        "  border-radius: 4px; padding: 3px 8px; min-height: 20px; }"
+        "QComboBox:hover { border-color: " + hoverBorder + "; }"
+        "QComboBox::drop-down { border: none; width: 20px; }"
+        "QComboBox QAbstractItemView { background: %2; color: %3; "
+        "  selection-background-color: %5; border: 1px solid %4; border-radius: 4px; }"
+
         "QLabel { background: transparent; }"
         "QFrame { background: %1; }"
+
         "QHeaderView { background: %2; color: %3; border: none; }"
-        "QHeaderView::section { background: %2; color: %3; border: 1px solid %4; padding: 2px 4px; }"
+        "QHeaderView::section { background: %2; color: %3; border: 1px solid %4; "
+        "  padding: 3px 6px; }"
+
         "QGraphicsView { background: %1; border: none; }"
         "QSplitter::handle { background: %4; }"
+
         "QPushButton { background: %2; color: %3; border: 1px solid %4; "
-        "  border-radius: 3px; padding: 3px 8px; }"
-        "QPushButton:hover { background: %6; }"
+        "  border-radius: 5px; padding: 4px 10px; }"
+        "QPushButton:hover { background: %6; border-color: " + hoverBorder + "; }"
         "QPushButton:pressed { background: %5; }"
+
         "QLineEdit { background: %1; color: %3; border: 1px solid %4; "
-        "  border-radius: 2px; padding: 2px; }"
+        "  border-radius: 4px; padding: 3px 4px; }"
+        "QLineEdit:focus { border-color: %5; }"
     ).arg(
         theme.background.name(),  // %1
         theme.surface.name(),     // %2

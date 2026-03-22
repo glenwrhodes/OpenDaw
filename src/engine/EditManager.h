@@ -1,4 +1,4 @@
-﻿#pragma once
+#pragma once
 
 #include "AudioEngine.h"
 #include <tracktion_engine/tracktion_engine.h>
@@ -73,7 +73,9 @@ public:
     bool isClipValid(te::Clip* clip) const;
 
     QList<InputSource> getAvailableInputSources() const;
+    QList<InputSource> getAvailableMidiInputSources() const;
     void assignInputToTrack(te::AudioTrack& track, const juce::String& deviceName);
+    void assignMidiInputToTrack(te::AudioTrack& track, const juce::String& deviceName);
     void clearTrackInput(te::AudioTrack& track);
     QString getTrackInputName(te::AudioTrack* track) const;
     void setTrackRecordEnabled(te::AudioTrack& track, bool enabled);

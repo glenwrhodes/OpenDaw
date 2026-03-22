@@ -1,4 +1,4 @@
-﻿#include "RotaryKnob.h"
+#include "RotaryKnob.h"
 #include "utils/ThemeManager.h"
 #include <QPainter>
 #include <QMouseEvent>
@@ -40,43 +40,55 @@ void RotaryKnob::paintEvent(QPaintEvent*)
     const int side = std::min(width(), height());
     const double margin = side * 0.12;
     QRectF knobRect(margin, margin, side - 2 * margin, side - 2 * margin);
-    knobRect.moveCenter(QPointF(width() / 2.0, height() / 2.0 - 6));
+    double yShift = label_.isEmpty() ? 0.0 : -6.0;
+    knobRect.moveCenter(QPointF(width() / 2.0, height() / 2.0 + yShift));
 
-    // Background arc: 270-degree travel with center at 12 o'clock.
-    const double minAngle = 225.0;   // bottom-left
-    const double maxAngle = -45.0;   // bottom-right
-    const double centerAngle = 90.0; // straight up (pan = 0)
+    const double minAngle = 225.0;
+    const double maxAngle = -45.0;
+    const double centerAngle = 90.0;
     const double fullSpan = maxAngle - minAngle;
     const double angle = minAngle + fullSpan * normalised();
     const bool isBipolar = (min_ < 0.0 && max_ > 0.0);
 
-    QPen arcPen(theme.border, 3.0, Qt::SolidLine, Qt::RoundCap);
+    QPen arcPen(QColor(38, 40, 46), 3.5, Qt::SolidLine, Qt::RoundCap);
     p.setPen(arcPen);
     p.drawArc(knobRect, int(minAngle * 16), int(fullSpan * 16));
 
-    // Value arc: bipolar controls (e.g. pan) fill from center to current value.
     const double valueStart = isBipolar ? centerAngle : minAngle;
     const double valueSpan = isBipolar ? (angle - centerAngle) : (angle - minAngle);
-    QPen valuePen(theme.accent, 3.0, Qt::SolidLine, Qt::RoundCap);
+
+    QRectF glowArcRect = knobRect.adjusted(-1.5, -1.5, 1.5, 1.5);
+    QPen glowPen(QColor(theme.accent.red(), theme.accent.green(),
+                        theme.accent.blue(), 50), 6.0, Qt::SolidLine, Qt::RoundCap);
+    p.setPen(glowPen);
+    p.drawArc(glowArcRect, int(valueStart * 16), int(valueSpan * 16));
+
+    QPen valuePen(theme.accent, 3.5, Qt::SolidLine, Qt::RoundCap);
     p.setPen(valuePen);
     p.drawArc(knobRect, int(valueStart * 16), int(valueSpan * 16));
 
-    // Knob body
-    double knobInset = side * 0.22;
+    double knobInset = side * 0.11;
     QRectF innerRect = knobRect.adjusted(knobInset, knobInset, -knobInset, -knobInset);
 
-    QRadialGradient grad(innerRect.center(), innerRect.width() / 2.0);
-    grad.setColorAt(0.0, theme.surfaceLight);
-    grad.setColorAt(1.0, theme.surface);
-    p.setBrush(grad);
+    QRectF shadowRect = innerRect.adjusted(-1, 0, 1, 2);
+    QRadialGradient shadowGrad(shadowRect.center(), shadowRect.width() / 2.0);
+    shadowGrad.setColorAt(0.0, QColor(0, 0, 0, 60));
+    shadowGrad.setColorAt(1.0, QColor(0, 0, 0, 0));
+    p.setBrush(shadowGrad);
     p.setPen(Qt::NoPen);
+    p.drawEllipse(shadowRect);
+
+    QRadialGradient grad(innerRect.center(), innerRect.width() / 2.0);
+    grad.setColorAt(0.0, QColor(72, 76, 84));
+    grad.setColorAt(0.85, QColor(44, 46, 52));
+    grad.setColorAt(1.0, QColor(36, 38, 44));
+    p.setBrush(grad);
+    p.setPen(QPen(QColor(28, 30, 34), 0.5));
     p.drawEllipse(innerRect);
 
-    // Indicator line
     const double angleRad = angle * M_PI / 180.0;
     QPointF center = innerRect.center();
     double r = innerRect.width() / 2.0 - 2.0;
-    // Qt's y-axis is downward, so use +cos/-sin to match arc direction.
     QPointF tip(center.x() + r * std::cos(angleRad),
                 center.y() - r * std::sin(angleRad));
     QPointF base(center.x() + (r * 0.3) * std::cos(angleRad),
@@ -85,7 +97,6 @@ void RotaryKnob::paintEvent(QPaintEvent*)
     p.setPen(QPen(theme.accentLight, 2.0, Qt::SolidLine, Qt::RoundCap));
     p.drawLine(base, tip);
 
-    // Label
     if (!label_.isEmpty()) {
         p.setPen(theme.textDim);
         QFont f = font();

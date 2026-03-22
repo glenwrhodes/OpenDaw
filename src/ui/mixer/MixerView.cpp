@@ -1,4 +1,4 @@
-﻿#include "MixerView.h"
+#include "MixerView.h"
 #include "utils/ThemeManager.h"
 #include <QFrame>
 #include <QMouseEvent>
@@ -56,7 +56,7 @@ MixerView::MixerView(EditManager* editMgr, QWidget* parent)
     stripContainer_->setPalette(contPal);
     stripLayout_ = new QHBoxLayout(stripContainer_);
     stripLayout_->setContentsMargins(4, 4, 4, 4);
-    stripLayout_->setSpacing(2);
+    stripLayout_->setSpacing(3);
     stripLayout_->setAlignment(Qt::AlignLeft);
     stripContainer_->installEventFilter(this);
     scrollArea_->viewport()->installEventFilter(this);

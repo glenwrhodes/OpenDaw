@@ -1,4 +1,4 @@
-﻿#include "VolumeFader.h"
+#include "VolumeFader.h"
 #include "utils/ThemeManager.h"
 #include <QPainter>
 #include <QMouseEvent>
@@ -73,19 +73,19 @@ void VolumeFader::paintEvent(QPaintEvent*)
 
     auto tr = trackRect();
 
-    // Track groove
     p.setPen(Qt::NoPen);
-    p.setBrush(theme.border);
+    p.setBrush(QColor(18, 18, 22));
     p.drawRoundedRect(tr, 2, 2);
 
-    // Filled portion
     double fillY = valueToY(value_);
     QRectF fillRect(tr.left(), fillY, tr.width(), tr.bottom() - fillY);
-    p.setBrush(theme.accent);
+    QLinearGradient fillGrad(fillRect.bottomLeft(), fillRect.topLeft());
+    fillGrad.setColorAt(0.0, QColor(0, 120, 108));
+    fillGrad.setColorAt(1.0, theme.accent);
+    p.setBrush(fillGrad);
     p.drawRoundedRect(fillRect, 2, 2);
 
-    // dB markers
-    p.setPen(theme.textDim);
+    p.setPen(QColor(190, 194, 200));
     QFont f = font();
     f.setPixelSize(8);
     p.setFont(f);
@@ -99,19 +99,18 @@ void VolumeFader::paintEvent(QPaintEvent*)
                    QString::number(int(db)));
     }
 
-    // Thumb
     auto thumb = thumbRect();
     QLinearGradient grad(thumb.topLeft(), thumb.bottomLeft());
-    grad.setColorAt(0.0, theme.surfaceLight.lighter(130));
-    grad.setColorAt(1.0, theme.surfaceLight);
+    grad.setColorAt(0.0, QColor(88, 92, 100));
+    grad.setColorAt(0.5, QColor(68, 72, 78));
+    grad.setColorAt(1.0, QColor(52, 54, 60));
     p.setBrush(grad);
-    p.setPen(QPen(theme.border, 0.5));
-    p.drawRoundedRect(thumb, 3, 3);
+    p.setPen(QPen(QColor(40, 42, 48), 0.5));
+    p.drawRoundedRect(thumb, 4, 4);
 
-    // Thumb center line
-    p.setPen(QPen(theme.accent, 1.0));
+    p.setPen(QPen(theme.accentLight, 1.0));
     double cy = thumb.center().y();
-    p.drawLine(QPointF(thumb.left() + 3, cy), QPointF(thumb.right() - 3, cy));
+    p.drawLine(QPointF(thumb.left() + 4, cy), QPointF(thumb.right() - 4, cy));
 }
 
 void VolumeFader::mousePressEvent(QMouseEvent* event)

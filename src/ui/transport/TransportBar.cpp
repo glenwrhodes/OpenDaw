@@ -1,4 +1,4 @@
-﻿#include "TransportBar.h"
+#include "TransportBar.h"
 #include "ui/timeline/GridSnapper.h"
 #include "utils/ThemeManager.h"
 #include "utils/IconFont.h"
@@ -13,7 +13,7 @@ TransportBar::TransportBar(EditManager* editMgr, QWidget* parent)
     : QWidget(parent), editMgr_(editMgr)
 {
     setAccessibleName("Transport Bar");
-    setFixedHeight(52);
+    setFixedHeight(56);
 
     auto& theme = ThemeManager::instance().current();
     setAutoFillBackground(true);
@@ -22,11 +22,11 @@ TransportBar::TransportBar(EditManager* editMgr, QWidget* parent)
     setPalette(pal);
 
     auto* layout = new QHBoxLayout(this);
-    layout->setContentsMargins(8, 4, 8, 4);
-    layout->setSpacing(6);
+    layout->setContentsMargins(10, 6, 10, 6);
+    layout->setSpacing(8);
 
     const QFont iconFont = icons::fontAudio(16);
-    const QSize transportButtonSize(34, 32);
+    const QSize transportButtonSize(36, 34);
 
     auto makeTransportBtn = [&](const QChar& glyph, const QString& name,
                                 const QColor& activeColor, bool checkable = false) {
@@ -73,8 +73,8 @@ TransportBar::TransportBar(EditManager* editMgr, QWidget* parent)
     panicBtn_->setFixedSize(transportButtonSize);
     panicBtn_->setStyleSheet(
         QString("QPushButton { background: %1; color: %2; border: 1px solid %3; "
-                "border-radius: 4px; font-weight: bold; }"
-                "QPushButton:hover { background: %4; color: #ff3333; }"
+                "border-radius: 5px; font-weight: bold; }"
+                "QPushButton:hover { background: %4; color: #ff4444; }"
                 "QPushButton:pressed { background: #cc2222; color: white; }")
             .arg(theme.surface.name(), QColor(220, 80, 60).name(),
                  theme.border.name(), theme.surfaceLight.name()));
@@ -100,22 +100,25 @@ TransportBar::TransportBar(EditManager* editMgr, QWidget* parent)
     connect(panicBtn_,     &QPushButton::clicked, this, &TransportBar::onPanic);
     connect(engineBtn_,    &QPushButton::clicked, this, &TransportBar::onEngineToggle);
 
-    // Position display
     const QString lcdStyle =
-        QString("QLabel { color: %1; background: %2; border: 1px solid %3; "
-                "border-radius: 3px; font-family: 'Consolas', 'Courier New', monospace; "
-                "font-size: 11pt; font-weight: bold; padding: 2px 4px; letter-spacing: 1px; }")
-            .arg(theme.accentLight.name(), theme.background.name(), theme.border.name());
+        QString("QLabel { color: %1; background: %2; "
+                "border: 1px solid %3; border-top-color: %4; "
+                "border-radius: 4px; font-family: 'Consolas', 'Courier New', monospace; "
+                "font-size: 12pt; font-weight: bold; padding: 4px 8px; letter-spacing: 1px; }")
+            .arg(theme.accentLight.name(),
+                 QColor(16, 16, 20).name(),
+                 QColor(22, 22, 28).name(),
+                 QColor(12, 12, 16).name());
 
     positionLabel_ = new QLabel("00:00:00", this);
     positionLabel_->setAccessibleName("Position Time");
-    positionLabel_->setFixedWidth(100);
+    positionLabel_->setFixedWidth(120);
     positionLabel_->setAlignment(Qt::AlignCenter);
     positionLabel_->setStyleSheet(lcdStyle);
 
     beatLabel_ = new QLabel("001.1.00", this);
     beatLabel_->setAccessibleName("Position Bars Beats");
-    beatLabel_->setFixedWidth(100);
+    beatLabel_->setFixedWidth(110);
     beatLabel_->setAlignment(Qt::AlignCenter);
     beatLabel_->setStyleSheet(lcdStyle);
 
@@ -147,11 +150,11 @@ TransportBar::TransportBar(EditManager* editMgr, QWidget* parent)
     sep2->setStyleSheet(sep1->styleSheet());
     layout->addWidget(sep2);
 
-    // BPM
     auto* bpmLabel = new QLabel("BPM", this);
     bpmLabel->setStyleSheet(
-        QString("QLabel { color: %1; background: transparent; border: none; }")
-            .arg(theme.text.name()));
+        QString("QLabel { color: %1; background: transparent; border: none; "
+                "font-size: 10px; font-weight: bold; letter-spacing: 0.5px; }")
+            .arg(theme.textDim.name()));
     bpmSpin_ = new QDoubleSpinBox(this);
     bpmSpin_->setAccessibleName("Tempo BPM");
     bpmSpin_->setRange(20.0, 300.0);
@@ -165,11 +168,11 @@ TransportBar::TransportBar(EditManager* editMgr, QWidget* parent)
     layout->addWidget(bpmLabel);
     layout->addWidget(bpmSpin_);
 
-    // Time Signature
-    auto* tsLabel = new QLabel("Time", this);
+    auto* tsLabel = new QLabel("Time Sig", this);
     tsLabel->setStyleSheet(
-        QString("QLabel { color: %1; background: transparent; border: none; }")
-            .arg(theme.text.name()));
+        QString("QLabel { color: %1; background: transparent; border: none; "
+                "font-size: 10px; font-weight: bold; letter-spacing: 0.5px; }")
+            .arg(theme.textDim.name()));
     timeSigNumSpin_ = new QSpinBox(this);
     timeSigNumSpin_->setAccessibleName("Time Signature Numerator");
     timeSigNumSpin_->setRange(1, 16);
@@ -181,8 +184,9 @@ TransportBar::TransportBar(EditManager* editMgr, QWidget* parent)
 
     auto* slash = new QLabel("/", this);
     slash->setStyleSheet(
-        QString("QLabel { color: %1; background: transparent; border: none; }")
-            .arg(theme.text.name()));
+        QString("QLabel { color: %1; background: transparent; border: none; "
+                "font-size: 12px; font-weight: bold; }")
+            .arg(theme.textDim.name()));
 
     timeSigDenCombo_ = new QComboBox(this);
     timeSigDenCombo_->setAccessibleName("Time Signature Denominator");
@@ -204,11 +208,11 @@ TransportBar::TransportBar(EditManager* editMgr, QWidget* parent)
     layout->addWidget(slash);
     layout->addWidget(timeSigDenCombo_);
 
-    // Snap mode
     auto* snapLabel = new QLabel("Snap", this);
     snapLabel->setStyleSheet(
-        QString("QLabel { color: %1; background: transparent; border: none; }")
-            .arg(theme.text.name()));
+        QString("QLabel { color: %1; background: transparent; border: none; "
+                "font-size: 10px; font-weight: bold; letter-spacing: 0.5px; }")
+            .arg(theme.textDim.name()));
     snapCombo_ = new QComboBox(this);
     snapCombo_->setAccessibleName("Grid Snap Mode");
     snapCombo_->addItem("Off",  int(SnapMode::Off));
@@ -436,14 +440,14 @@ void TransportBar::updateEngineButtonStyle()
     if (active) {
         engineBtn_->setStyleSheet(
             QString("QPushButton { background: %1; color: %2; border: 1px solid %3; "
-                    "border-radius: 4px; font-weight: bold; }"
+                    "border-radius: 5px; font-weight: bold; }"
                     "QPushButton:hover { background: %4; }")
-                .arg(QColor(25, 120, 50).name(), QColor(70, 230, 70).name(),
-                     QColor(35, 150, 60).name(), QColor(30, 140, 55).name()));
+                .arg(QColor(20, 110, 48).name(), QColor(60, 220, 65).name(),
+                     QColor(30, 140, 55).name(), QColor(25, 128, 52).name()));
     } else {
         engineBtn_->setStyleSheet(
             QString("QPushButton { background: %1; color: %2; border: 1px solid %3; "
-                    "border-radius: 4px; font-weight: bold; }"
+                    "border-radius: 5px; font-weight: bold; }"
                     "QPushButton:hover { background: %4; }")
                 .arg(theme.surface.name(), theme.textDim.name(),
                      theme.border.name(), theme.surfaceLight.name()));
@@ -520,14 +524,16 @@ void TransportBar::updatePosition()
 void TransportBar::applyButtonStyle(QPushButton* btn, const QColor& activeColor)
 {
     auto& theme = ThemeManager::instance().current();
+    QColor hoverBg = theme.surfaceLight.lighter(115);
     btn->setStyleSheet(
         QString("QPushButton { background: %1; color: %2; border: 1px solid %3; "
-                "border-radius: 4px; font-weight: bold; font-size: 8pt; }"
-                "QPushButton:hover { background: %4; }"
-                "QPushButton:checked { background: %5; color: white; }"
-                "QPushButton:pressed { background: %5; }")
+                "border-radius: 5px; font-weight: bold; font-size: 8pt; }"
+                "QPushButton:hover { background: %4; border-color: %5; }"
+                "QPushButton:checked { background: %6; color: white; border-color: %7; }"
+                "QPushButton:pressed { background: %6; }")
             .arg(theme.surface.name(), theme.text.name(), theme.border.name(),
-                 theme.surfaceLight.name(), activeColor.name()));
+                 hoverBg.name(), QColor(theme.border).lighter(130).name(),
+                 activeColor.name(), activeColor.darker(130).name()));
 }
 
 } // namespace OpenDaw

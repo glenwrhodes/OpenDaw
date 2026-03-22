@@ -1,4 +1,4 @@
-﻿#include "EditManager.h"
+#include "EditManager.h"
 #include <juce_audio_formats/juce_audio_formats.h>
 #include <tracktion_engine/tracktion_engine.h>
 #include <QDebug>
@@ -909,13 +909,51 @@ void EditManager::clearTrackInput(te::AudioTrack& track)
     emit routingChanged();
 }
 
+QList<InputSource> EditManager::getAvailableMidiInputSources() const
+{
+    QList<InputSource> sources;
+    auto& dm = audioEngine_.engine().getDeviceManager();
+    for (int i = 0; i < dm.getNumMidiInDevices(); ++i) {
+        if (auto dev = dm.getMidiInDevice(i)) {
+            InputSource src;
+            src.deviceName = dev->getName();
+            src.displayName = QString::fromStdString(dev->getName().toStdString());
+            sources.append(src);
+        }
+    }
+    return sources;
+}
+
+void EditManager::assignMidiInputToTrack(te::AudioTrack& track,
+                                          const juce::String& deviceName)
+{
+    if (!edit_) return;
+
+    clearTrackInputInternal(track);
+    edit_->getTransport().ensureContextAllocated();
+
+    for (auto* instance : edit_->getAllInputDevices()) {
+        if (instance->getInputDevice().getDeviceType() == te::InputDevice::physicalMidiDevice
+            && instance->getInputDevice().getName() == deviceName) {
+            instance->setTarget(track.itemID, true,
+                                &edit_->getUndoManager(), 0);
+            break;
+        }
+    }
+
+    markDirtyAndNotify();
+    emit routingChanged();
+}
+
 QString EditManager::getTrackInputName(te::AudioTrack* track) const
 {
     if (!edit_ || !track) return {};
 
     auto devices = edit_->getEditInputDevices().getDevicesForTargetTrack(*track);
     for (auto* instance : devices) {
-        if (instance->getInputDevice().getDeviceType() == te::InputDevice::waveDevice)
+        auto type = instance->getInputDevice().getDeviceType();
+        if (type == te::InputDevice::waveDevice
+            || type == te::InputDevice::physicalMidiDevice)
             return QString::fromStdString(
                 instance->getInputDevice().getName().toStdString());
     }
@@ -930,7 +968,9 @@ void EditManager::setTrackRecordEnabled(te::AudioTrack& track, bool enabled)
 
     auto devices = edit_->getEditInputDevices().getDevicesForTargetTrack(track);
     for (auto* instance : devices) {
-        if (instance->getInputDevice().getDeviceType() == te::InputDevice::waveDevice) {
+        auto type = instance->getInputDevice().getDeviceType();
+        if (type == te::InputDevice::waveDevice
+            || type == te::InputDevice::physicalMidiDevice) {
             instance->setRecordingEnabled(track.itemID, enabled);
             break;
         }
@@ -945,7 +985,9 @@ bool EditManager::isTrackRecordEnabled(te::AudioTrack* track) const
 
     auto devices = edit_->getEditInputDevices().getDevicesForTargetTrack(*track);
     for (auto* instance : devices) {
-        if (instance->getInputDevice().getDeviceType() == te::InputDevice::waveDevice)
+        auto type = instance->getInputDevice().getDeviceType();
+        if (type == te::InputDevice::waveDevice
+            || type == te::InputDevice::physicalMidiDevice)
             return instance->isRecordingEnabled(track->itemID);
     }
     return false;

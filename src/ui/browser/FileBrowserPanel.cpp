@@ -1,4 +1,4 @@
-﻿#include "FileBrowserPanel.h"
+#include "FileBrowserPanel.h"
 #include "utils/ThemeManager.h"
 #include <QDir>
 #include <QStandardPaths>
@@ -22,8 +22,8 @@ FileBrowserPanel::FileBrowserPanel(QWidget* parent)
     setPalette(pal);
 
     layout_ = new QVBoxLayout(this);
-    layout_->setContentsMargins(4, 4, 4, 4);
-    layout_->setSpacing(4);
+    layout_->setContentsMargins(6, 6, 6, 6);
+    layout_->setSpacing(5);
 
     // Quick location combo
     locationCombo_ = new QComboBox(this);
@@ -49,7 +49,7 @@ FileBrowserPanel::FileBrowserPanel(QWidget* parent)
     pathEdit_->setReadOnly(true);
     pathEdit_->setStyleSheet(
         QString("QLineEdit { background: %1; color: %2; border: 1px solid %3; "
-                "font-size: 10px; padding: 2px; }")
+                "border-radius: 4px; font-size: 10px; padding: 3px 6px; }")
             .arg(theme.background.name(), theme.textDim.name(), theme.border.name()));
     layout_->addWidget(pathEdit_);
 
@@ -71,10 +71,14 @@ FileBrowserPanel::FileBrowserPanel(QWidget* parent)
     treeView_->header()->setStretchLastSection(true);
 
     treeView_->setStyleSheet(
-        QString("QTreeView { background: %1; color: %2; border: 1px solid %3; font-size: 11px; }"
-                "QTreeView::item:selected { background: %4; }"
-                "QTreeView::item:hover { background: %5; }"
-                "QHeaderView::section { background: %6; color: %2; border: 1px solid %3; padding: 2px 4px; }")
+        QString("QTreeView { background: %1; color: %2; border: 1px solid %3; "
+                "border-radius: 4px; font-size: 11px; }"
+                "QTreeView::item { padding: 3px 0; }"
+                "QTreeView::item:selected { background: %4; border-radius: 3px; }"
+                "QTreeView::item:hover:!selected { background: %5; border-radius: 3px; }"
+                "QHeaderView::section { background: %6; color: %2; "
+                "border: none; border-bottom: 1px solid %3; padding: 4px 6px; "
+                "font-weight: bold; font-size: 10px; }")
             .arg(theme.background.name(), theme.text.name(), theme.border.name(),
                  theme.accent.name(), theme.surfaceLight.name(), theme.surface.name()));
 

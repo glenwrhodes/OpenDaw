@@ -1,4 +1,4 @@
-﻿#include "ClipItem.h"
+#include "ClipItem.h"
 #include "GridSnapper.h"
 #include "engine/EditManager.h"
 #include "utils/ThemeManager.h"
@@ -189,7 +189,17 @@ void ClipItem::paint(QPainter* painter,
         bg = isSelected() ? theme.midiClipBodySelected : theme.midiClipBody;
     else
         bg = isSelected() ? theme.clipBodySelected : theme.clipBody;
-    painter->fillRect(r, bg);
+
+    painter->setRenderHint(QPainter::Antialiasing, true);
+    painter->setPen(Qt::NoPen);
+    painter->setBrush(bg);
+    painter->drawRoundedRect(r.adjusted(0.5, 0.5, -0.5, -0.5), 4.0, 4.0);
+
+    QLinearGradient topHighlight(r.topLeft(), QPointF(r.left(), r.top() + 6));
+    topHighlight.setColorAt(0.0, QColor(255, 255, 255, 22));
+    topHighlight.setColorAt(1.0, QColor(255, 255, 255, 0));
+    painter->setBrush(topHighlight);
+    painter->drawRoundedRect(r.adjusted(0.5, 0.5, -0.5, -0.5), 4.0, 4.0);
 
     if (!waveMin_.empty() && !waveMax_.empty()) {
         int n = static_cast<int>(waveMin_.size());
@@ -253,9 +263,11 @@ void ClipItem::paint(QPainter* painter,
         paintMidiNotes(painter, r);
     }
 
-    painter->setPen(QPen(theme.border, 0.5));
+    painter->setRenderHint(QPainter::Antialiasing, true);
+    painter->setPen(QPen(QColor(theme.border.red(), theme.border.green(),
+                                theme.border.blue(), 140), 0.5));
     painter->setBrush(Qt::NoBrush);
-    painter->drawRect(r);
+    painter->drawRoundedRect(r.adjusted(0.5, 0.5, -0.5, -0.5), 4.0, 4.0);
 
     if (clip_) {
         painter->setPen(theme.text);

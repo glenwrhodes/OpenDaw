@@ -1,4 +1,4 @@
-﻿#pragma once
+#pragma once
 
 #include "engine/EditManager.h"
 #include "ui/controls/VolumeFader.h"
@@ -11,6 +11,7 @@
 #include <QLabel>
 #include <QLineEdit>
 #include <QTimer>
+#include <QPixmap>
 #include <tracktion_engine/tracktion_engine.h>
 
 namespace OpenDaw {
@@ -26,7 +27,7 @@ public:
     static ChannelStrip* createMasterStrip(EditManager* editMgr,
                                            QWidget* parent = nullptr);
 
-    QSize sizeHint() const override { return {88, 400}; }
+    QSize sizeHint() const override { return {92, 400}; }
 
     te::AudioTrack* track() const { return track_; }
     void refresh();
@@ -34,6 +35,7 @@ public:
     bool isSelected() const { return selected_; }
 
 protected:
+    void paintEvent(QPaintEvent* event) override;
     bool eventFilter(QObject* obj, QEvent* event) override;
 
 signals:
@@ -84,6 +86,9 @@ private:
     te::LevelMeasurer::Client meterClient_;
     te::LevelMeterPlugin* levelMeterPlugin_ = nullptr;
     double lastTrackedPlayheadSecs_ = -1.0;
+
+    QPixmap stripBgPixmap_;
+    QPixmap stripBgScaled_;
 };
 
 } // namespace OpenDaw

@@ -1,4 +1,4 @@
-﻿#include "PianoRollEditor.h"
+#include "PianoRollEditor.h"
 #include "ChannelColors.h"
 #include "engine/EditManager.h"
 #include "utils/IconFont.h"
@@ -29,7 +29,9 @@ QPushButton* PianoRollEditor::makeIconButton(QWidget* parent, const QFont& font,
     btn->setToolTip(tooltip);
     btn->setFixedSize(size, size);
     btn->setStyleSheet(QString(
-        "QPushButton { min-width: %1px; min-height: %1px; font-size: 14px; }"
+        "QPushButton { min-width: %1px; max-width: %1px; "
+        "min-height: %1px; max-height: %1px; "
+        "padding: 0px; font-size: 12px; border-radius: 4px; }"
         "QPushButton:hover { background: %2; }")
         .arg(size).arg(theme.surfaceLight.name()));
     return btn;
@@ -46,14 +48,14 @@ PianoRollEditor::PianoRollEditor(QWidget* parent)
     mainLayout->setSpacing(0);
 
     auto* toolbar = new QWidget(this);
-    toolbar->setFixedHeight(40);
+    toolbar->setFixedHeight(34);
     toolbar->setAutoFillBackground(true);
     QPalette tbPal;
     tbPal.setColor(QPalette::Window, theme.surface);
     toolbar->setPalette(tbPal);
 
     auto* tbLayout = new QHBoxLayout(toolbar);
-    tbLayout->setContentsMargins(6, 4, 6, 4);
+    tbLayout->setContentsMargins(6, 3, 6, 3);
     tbLayout->setSpacing(4);
 
     clipNameLabel_ = new QLabel("No clip selected", toolbar);
@@ -65,12 +67,14 @@ PianoRollEditor::PianoRollEditor(QWidget* parent)
 
     tbLayout->addStretch();
 
-    const int iconSize = 16;
-    const int btnSize = 26;
+    const int iconSize = 14;
+    const int btnSize = 24;
     const auto faFont = icons::fontAudio(iconSize);
 
     const QString modeButtonStyle = QString(
-        "QPushButton { min-width: 26px; min-height: 26px; font-size: 14px; }"
+        "QPushButton { min-width: 24px; max-width: 24px; "
+        "min-height: 24px; max-height: 24px; "
+        "padding: 0px; font-size: 12px; border-radius: 4px; }"
         "QPushButton:checked { background: %1; border-color: %2; }"
         "QPushButton:hover { background: %3; }")
         .arg(theme.surfaceLight.name(), theme.accent.name(), theme.surfaceLight.name());
@@ -159,7 +163,9 @@ PianoRollEditor::PianoRollEditor(QWidget* parent)
 
     // Musical typing + step record toggle buttons
     const QString toggleStyle = QString(
-        "QPushButton { min-width: 26px; min-height: 26px; font-size: 14px; }"
+        "QPushButton { min-width: 24px; max-width: 24px; "
+        "min-height: 24px; max-height: 24px; "
+        "padding: 0px; font-size: 12px; border-radius: 4px; }"
         "QPushButton:checked { background: %1; border-color: %2; }"
         "QPushButton:hover { background: %3; }")
         .arg(theme.accent.darker(120).name(), theme.accent.name(), theme.surfaceLight.name());

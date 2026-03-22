@@ -1,4 +1,4 @@
-﻿cmake_minimum_required(VERSION 3.22)
+cmake_minimum_required(VERSION 3.22)
 project(OpenDaw VERSION 0.0.0 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 20)
@@ -145,7 +145,8 @@ qt_add_resources(OpenDaw "OpenDaw_resources" PREFIX "/" BASE resources FILES
     resources/splash.png
     resources/icon.png
     resources/fontaudio.ttf
-    resources/MaterialSymbolsOutlined.ttf)
+    resources/MaterialSymbolsOutlined.ttf
+    resources/mixerStripBG.png)
 target_include_directories(OpenDaw PRIVATE src)
 
 target_compile_definitions(OpenDaw PRIVATE
