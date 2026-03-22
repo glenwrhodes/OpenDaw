@@ -1,4 +1,4 @@
-﻿#include "TimelineView.h"
+#include "TimelineView.h"
 #include "AutomationLaneItem.h"
 #include "AutomationLaneHeader.h"
 #include "AutomationPointItem.h"
@@ -266,10 +266,16 @@ TimelineView::TimelineView(EditManager* editMgr, QWidget* parent)
         loopOverlayItem_->setVisible(false);
     }
 
-    // Sync ruler scroll with graphics view horizontal scroll
+    // Sync ruler scroll with graphics view horizontal scroll, and expand scene if near edge
     connect(graphicsView_->horizontalScrollBar(), &QScrollBar::valueChanged,
             this, [this](int val) {
                 ruler_->setScrollX(val);
+                QRectF sr = scene_->sceneRect();
+                double viewRight = val + graphicsView_->viewport()->width();
+                if (viewRight > sr.width() - 200.0) {
+                    double newWidth = sr.width() + 800.0;
+                    scene_->setSceneRect(0, 0, newWidth, sr.height());
+                }
             });
 
     // Sync track header vertical scroll with timeline vertical scroll
@@ -896,13 +902,14 @@ void TimelineView::rebuildClips()
     int numTracks = tracks.size();
     qDebug() << "[rebuildClips] numTracks:" << numTracks;
 
-    double totalBeats = 200.0;
+    double beatsPerBar = editMgr_ ? editMgr_->getTimeSigNumerator() : 4;
+    double totalBeats = beatsPerBar * 200.0;
     for (auto* track : tracks) {
         for (auto* clip : track->getClips()) {
             auto& ts = clip->edit.tempoSequence;
             auto endTime = clip->getPosition().getEnd();
             const double endBeat = ts.toBeats(endTime).inBeats();
-            totalBeats = std::max(totalBeats, endBeat + 16.0);
+            totalBeats = std::max(totalBeats, endBeat + beatsPerBar * 8.0);
         }
     }
     double sceneWidth = totalBeats * pixelsPerBeat_;
