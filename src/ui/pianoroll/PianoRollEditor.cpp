@@ -205,10 +205,14 @@ PianoRollEditor::PianoRollEditor(QWidget* parent)
     snapCombo_->addItem("Off");
     snapCombo_->addItem("1/32");
     snapCombo_->addItem("1/16");
+    snapCombo_->addItem("1/16T");
     snapCombo_->addItem("1/8");
+    snapCombo_->addItem("1/8T");
     snapCombo_->addItem("1/4");
+    snapCombo_->addItem("1/4T");
+    snapCombo_->addItem("1/2");
     snapCombo_->addItem("Bar");
-    snapCombo_->setCurrentIndex(4);
+    snapCombo_->setCurrentIndex(6);
     snapCombo_->setFixedWidth(70);
     connect(snapCombo_, qOverload<int>(&QComboBox::currentIndexChanged),
             this, &PianoRollEditor::onSnapModeChanged);
@@ -555,7 +559,7 @@ PianoRollEditor::PianoRollEditor(QWidget* parent)
         noteGrid_->setPixelsPerBeat(noteGrid_->pixelsPerBeat() / 1.3);
     });
 
-    onSnapModeChanged(4);
+    onSnapModeChanged(6);
     noteGrid_->setEditMode(NoteGrid::EditMode::Edit);
 }
 
@@ -692,9 +696,10 @@ void PianoRollEditor::onSnapModeChanged(int index)
 {
     static constexpr SnapMode mapping[] = {
         SnapMode::Off, SnapMode::EighthBeat, SnapMode::QuarterBeat,
-        SnapMode::HalfBeat, SnapMode::Beat, SnapMode::Bar
+        SnapMode::TripletSixteenth, SnapMode::HalfBeat, SnapMode::TripletEighth,
+        SnapMode::Beat, SnapMode::TripletQuarter, SnapMode::HalfNote, SnapMode::Bar
     };
-    if (index >= 0 && index < 6)
+    if (index >= 0 && index < 10)
         noteGrid_->snapper().setMode(mapping[index]);
 }
 

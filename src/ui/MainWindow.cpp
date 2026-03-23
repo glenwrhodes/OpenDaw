@@ -654,6 +654,12 @@ void MainWindow::createDocks()
     connect(pianoRoll_, &PianoRollEditor::notesChanged,
             timelineView_, &TimelineView::rebuildClips);
 
+    connect(pianoRoll_, &PianoRollEditor::notesChanged,
+            this, [this]() {
+                if (sheetMusicView_ && sheetMusicView_->clip())
+                    sheetMusicView_->refresh();
+            });
+
     connect(&editMgr_, &EditManager::aboutToChangeEdit, this, [this]() {
         if (pianoRoll_)
             pianoRoll_->setClip(nullptr, nullptr);

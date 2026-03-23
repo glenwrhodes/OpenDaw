@@ -876,6 +876,11 @@ void ScoreScene::paintSystem(QPainter* p, const SystemLayout& sys)
             drawBeamGroup(p, bg, meas.trebleEvents, i, sysY);
         for (auto& bg : meas.bassBeams)
             drawBeamGroup(p, bg, meas.bassEvents, i, sysY);
+
+        for (auto& tg : meas.trebleTriplets)
+            drawTripletBracket(p, tg, meas.trebleEvents, i, sysY);
+        for (auto& tg : meas.bassTriplets)
+            drawTripletBracket(p, tg, meas.bassEvents, i, sysY);
     }
 
     drawPhrases(p, sys);
@@ -1227,6 +1232,82 @@ void ScoreScene::drawBeamGroup(QPainter* p, const BeamGroup& bg,
         p->drawPolygon(b2);
     }
     p->setBrush(Qt::NoBrush);
+}
+
+// ── triplet brackets ────────────────────────────────────────────────────────
+
+void ScoreScene::drawTripletBracket(QPainter* p, const TripletGroup& tg,
+                                     const std::vector<NotationEvent>& events,
+                                     int localMeasureOffset, double sysY)
+{
+    if (tg.eventIndices.size() < 3) return;
+
+    int first = tg.eventIndices.front();
+    int last = tg.eventIndices.back();
+
+    double x1 = beatToX(localMeasureOffset, events[first].beatInMeasure) - kNoteHeadHalfW;
+    double x2 = beatToX(localMeasureOffset, events[last].beatInMeasure) + kNoteHeadHalfW;
+    double midX = (x1 + x2) / 2.0;
+
+    // determine direction: use average staff position
+    int totalPos = 0, count = 0;
+    for (int idx : tg.eventIndices) {
+        for (auto& n : events[idx].notes) {
+            totalPos += n.staffPosition;
+            count++;
+        }
+    }
+    int avgPos = count > 0 ? totalPos / count : 4;
+    int stemDir = stemDirectionForPosition(avgPos);
+
+    // place bracket on the beam/stem side
+    double bracketY;
+    if (stemDir > 0) {
+        // stems up: bracket above (find highest stem tip)
+        bracketY = 1e9;
+        for (int idx : tg.eventIndices) {
+            for (auto& n : events[idx].notes) {
+                double ny = staffPositionY(n.staff, n.staffPosition, sysY);
+                double stemTip = ny - 3.0 * met_.staffLineSpacing;
+                bracketY = std::min(bracketY, stemTip);
+            }
+        }
+        bracketY -= 12.0;
+    } else {
+        // stems down: bracket below (find lowest stem tip)
+        bracketY = -1e9;
+        for (int idx : tg.eventIndices) {
+            for (auto& n : events[idx].notes) {
+                double ny = staffPositionY(n.staff, n.staffPosition, sysY);
+                double stemTip = ny + 3.0 * met_.staffLineSpacing;
+                bracketY = std::max(bracketY, stemTip);
+            }
+        }
+        bracketY += 12.0;
+    }
+
+    double tickH = (stemDir > 0) ? 4.0 : -4.0;
+
+    p->setPen(QPen(kNoteColor, 1.2));
+
+    // bracket lines with gap for the "3"
+    double gapHalf = 8.0;
+    if (x1 < midX - gapHalf) {
+        p->drawLine(QPointF(x1, bracketY + tickH), QPointF(x1, bracketY));
+        p->drawLine(QPointF(x1, bracketY), QPointF(midX - gapHalf, bracketY));
+    }
+    if (x2 > midX + gapHalf) {
+        p->drawLine(QPointF(midX + gapHalf, bracketY), QPointF(x2, bracketY));
+        p->drawLine(QPointF(x2, bracketY + tickH), QPointF(x2, bracketY));
+    }
+
+    // draw "3"
+    p->setFont(textFont_);
+    p->setPen(kNoteColor);
+    QFontMetricsF fm(textFont_);
+    double tw = fm.horizontalAdvance("3");
+    double th = fm.ascent();
+    p->drawText(QPointF(midX - tw / 2.0, bracketY + th / 3.0), "3");
 }
 
 // ── slurs / phrases ─────────────────────────────────────────────────────────

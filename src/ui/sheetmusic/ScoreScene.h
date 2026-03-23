@@ -107,6 +107,9 @@ private:
     void drawBeamGroup(QPainter* p, const BeamGroup& bg,
                        const std::vector<NotationEvent>& events,
                        int localMeasureOffset, double sysY);
+    void drawTripletBracket(QPainter* p, const TripletGroup& tg,
+                            const std::vector<NotationEvent>& events,
+                            int localMeasureOffset, double sysY);
     void drawSlur(QPainter* p, double startX, double startY,
                   double endX, double endY, int direction);
     void drawPhrases(QPainter* p, const SystemLayout& sys);

@@ -19,6 +19,32 @@ double noteValueBeats(NoteValue v)
     return 1.0;
 }
 
+static bool isTripletDuration(double beats)
+{
+    // common triplet durations:
+    // eighth triplet: 1/3 beat ≈ 0.333
+    // quarter triplet: 2/3 beat ≈ 0.667
+    // sixteenth triplet: 1/6 beat ≈ 0.167
+    static const double kTripletDurs[] = {
+        1.0 / 3.0,   // eighth-note triplet
+        2.0 / 3.0,   // quarter-note triplet
+        1.0 / 6.0,   // sixteenth-note triplet
+        4.0 / 3.0,   // half-note triplet
+    };
+    for (double td : kTripletDurs)
+        if (std::abs(beats - td) < 0.05) return true;
+    return false;
+}
+
+static NoteValue tripletNoteValue(double beats)
+{
+    if (std::abs(beats - 1.0 / 6.0) < 0.05) return NoteValue::Sixteenth;
+    if (std::abs(beats - 1.0 / 3.0) < 0.05) return NoteValue::Eighth;
+    if (std::abs(beats - 2.0 / 3.0) < 0.05) return NoteValue::Quarter;
+    if (std::abs(beats - 4.0 / 3.0) < 0.05) return NoteValue::Half;
+    return NoteValue::Eighth;
+}
+
 NoteValue quantizeDuration(double beats, bool& dotted)
 {
     struct Entry { double dur; NoteValue v; bool dot; };
@@ -258,7 +284,13 @@ void NotationModel::buildFromClip(te::MidiClip* clip, int timeSigNum, int timeSi
         nn.accidental = spelling.display;
         nn.stemDirection = stemDirectionForPosition(nn.staffPosition);
         nn.beatInMeasure = beatInMeas;
-        nn.value = quantizeDuration(clampedLen, nn.dotted);
+        bool triplet = isTripletDuration(clampedLen);
+        if (triplet) {
+            nn.value = tripletNoteValue(clampedLen);
+            nn.dotted = false;
+        } else {
+            nn.value = quantizeDuration(clampedLen, nn.dotted);
+        }
         nn.engineNote = note;
 
         // find or create an event at this beat (for chord grouping)
@@ -276,6 +308,7 @@ void NotationModel::buildFromClip(te::MidiClip* clip, int timeSigNum, int timeSi
         if (!merged) {
             NotationEvent evt;
             evt.isRest = false;
+            evt.isTriplet = triplet;
             evt.beatInMeasure = beatInMeas;
             evt.value = nn.value;
             evt.dotted = nn.dotted;
@@ -305,6 +338,9 @@ void NotationModel::buildFromClip(te::MidiClip* clip, int timeSigNum, int timeSi
         for (auto& bg : measures_[m].bassBeams)
             for (int idx : bg.eventIndices)
                 measures_[m].bassEvents[idx].beamed = true;
+
+        detectTriplets(measures_[m].trebleEvents, StaffKind::Treble, measures_[m].trebleTriplets);
+        detectTriplets(measures_[m].bassEvents, StaffKind::Bass, measures_[m].bassTriplets);
     }
 }
 
@@ -360,7 +396,19 @@ void NotationModel::insertRests(std::vector<NotationEvent>& events,
             fillGapWithRests(result, cursor, evt.beatInMeasure, staff);
 
         result.push_back(evt);
-        double evtDur = noteValueBeats(evt.value) * (evt.dotted ? 1.5 : 1.0);
+        double evtDur;
+        if (evt.isTriplet) {
+            // triplet durations: eighth=1/3, quarter=2/3, sixteenth=1/6, half=4/3
+            switch (evt.value) {
+            case NoteValue::Sixteenth: evtDur = 1.0 / 6.0; break;
+            case NoteValue::Eighth:    evtDur = 1.0 / 3.0; break;
+            case NoteValue::Quarter:   evtDur = 2.0 / 3.0; break;
+            case NoteValue::Half:      evtDur = 4.0 / 3.0; break;
+            default:                   evtDur = 1.0 / 3.0; break;
+            }
+        } else {
+            evtDur = noteValueBeats(evt.value) * (evt.dotted ? 1.5 : 1.0);
+        }
         cursor = evt.beatInMeasure + evtDur;
     }
 
@@ -433,6 +481,43 @@ void NotationModel::buildBeamGroups(const std::vector<NotationEvent>& events,
         beamsOut.push_back(current);
 
     (void)beatsPerMeasure;
+}
+
+// ── triplet detection ───────────────────────────────────────────────────────
+
+void NotationModel::detectTriplets(std::vector<NotationEvent>& events,
+                                    StaffKind staff,
+                                    std::vector<TripletGroup>& tripletsOut)
+{
+    tripletsOut.clear();
+
+    // scan for consecutive triplet-flagged events that form groups of 3
+    int i = 0;
+    int n = static_cast<int>(events.size());
+    while (i < n) {
+        if (!events[i].isRest && events[i].isTriplet) {
+            // try to collect 3 consecutive triplet events
+            int start = i;
+            int count = 0;
+            while (i < n && !events[i].isRest && events[i].isTriplet && count < 3) {
+                count++;
+                i++;
+            }
+            if (count == 3) {
+                TripletGroup tg;
+                tg.staff = staff;
+                for (int j = start; j < start + 3; j++)
+                    tg.eventIndices.push_back(j);
+                tripletsOut.push_back(tg);
+
+                // also beam these together if not already beamed
+                for (int j = start; j < start + 3; j++)
+                    events[j].beamed = true;
+            }
+        } else {
+            i++;
+        }
+    }
 }
 
 } // namespace OpenDaw

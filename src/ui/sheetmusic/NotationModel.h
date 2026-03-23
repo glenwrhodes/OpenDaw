@@ -40,6 +40,7 @@ struct NotationRest {
 struct NotationEvent {
     bool isRest = false;
     bool beamed = false;
+    bool isTriplet = false;
     std::vector<NotationNote> notes;
     NotationRest rest;
     double beatInMeasure = 0.0;
@@ -53,12 +54,19 @@ struct BeamGroup {
     StaffKind staff = StaffKind::Treble;
 };
 
+struct TripletGroup {
+    std::vector<int> eventIndices;
+    StaffKind staff = StaffKind::Treble;
+};
+
 struct NotationMeasure {
     int measureNumber = 0;
     std::vector<NotationEvent> trebleEvents;
     std::vector<NotationEvent> bassEvents;
     std::vector<BeamGroup> trebleBeams;
     std::vector<BeamGroup> bassBeams;
+    std::vector<TripletGroup> trebleTriplets;
+    std::vector<TripletGroup> bassTriplets;
 };
 
 struct PhraseMarking {
@@ -121,6 +129,9 @@ private:
     void buildBeamGroups(const std::vector<NotationEvent>& events,
                          StaffKind staff,
                          std::vector<BeamGroup>& beamsOut);
+    void detectTriplets(std::vector<NotationEvent>& events,
+                        StaffKind staff,
+                        std::vector<TripletGroup>& tripletsOut);
 
     std::vector<NotationMeasure> measures_;
     std::vector<PhraseMarking> phrases_;
