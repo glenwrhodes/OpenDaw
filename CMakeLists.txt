@@ -42,7 +42,7 @@ message(STATUS "OpenDaw numeric version : ${OpenDaw_NUMERIC_VERSION}")
 
 # ── Qt6 ──────────────────────────────────────────────────────────────────────
 set(CMAKE_PREFIX_PATH "c:/qt/6.10.2/msvc2022_64" CACHE STRING "Qt prefix path")
-find_package(Qt6 REQUIRED COMPONENTS Widgets Network Concurrent)
+find_package(Qt6 REQUIRED COMPONENTS Widgets Network Concurrent PrintSupport)
 qt_standard_project_setup()
 
 # ── JUCE ─────────────────────────────────────────────────────────────────────
@@ -168,6 +168,7 @@ target_link_libraries(OpenDaw PRIVATE
     Qt6::Widgets
     Qt6::Network
     Qt6::Concurrent
+    Qt6::PrintSupport
     tracktion::tracktion_core
     tracktion::tracktion_engine
     tracktion::tracktion_graph

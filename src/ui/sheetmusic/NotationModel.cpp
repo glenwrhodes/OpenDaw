@@ -58,7 +58,7 @@ static const bool kIsBlackKey[12] = {
     false, true, false, true, false, false, true, false, true, false, true, false
 };
 
-NoteSpelling spellMidiNote(int midiNote, int keySig)
+NoteSpelling spellMidiNote(int midiNote, int keySig, bool preferFlats)
 {
     int pc = midiNote % 12;
 
@@ -76,9 +76,15 @@ NoteSpelling spellMidiNote(int midiNote, int keySig)
         if (keyPitch[d] == pc)
             return {d, Accidental::None};
 
+    // for accidentals outside the key, decide sharp vs flat:
+    // flat keys (keySig < 0) → prefer flats
+    // sharp keys (keySig > 0) → prefer sharps
+    // C major (keySig == 0) → use the preferFlats toggle
+    bool useFlats = (keySig < 0) || (keySig == 0 && preferFlats);
+
     int diatonic;
     if (kIsBlackKey[pc])
-        diatonic = (keySig >= 0) ? kDiatonicSharp[pc] : kDiatonicFlat[pc];
+        diatonic = useFlats ? kDiatonicFlat[pc] : kDiatonicSharp[pc];
     else
         diatonic = kDiatonicSharp[pc];
 
@@ -91,7 +97,7 @@ NoteSpelling spellMidiNote(int midiNote, int keySig)
     if (pc == (natChroma + 11) % 12)
         return {diatonic, Accidental::Flat};
 
-    return {diatonic, (keySig >= 0) ? Accidental::Sharp : Accidental::Flat};
+    return {diatonic, useFlats ? Accidental::Flat : Accidental::Sharp};
 }
 
 int spelledNoteToStaffPosition(int midiNote, int diatonic, StaffKind staff)
@@ -118,6 +124,34 @@ int stemDirectionForPosition(int staffPosition)
     return (staffPosition >= 4) ? -1 : 1;
 }
 
+int staffPositionToMidi(int staffPos, StaffKind staff)
+{
+    return staffPositionToMidi(staffPos, staff, 0);
+}
+
+int staffPositionToMidi(int staffPos, StaffKind staff, int keySig)
+{
+    static const int kChromaFromDiatonic[7] = {0, 2, 4, 5, 7, 9, 11};
+    int refAbs = (staff == StaffKind::Treble) ? (4 * 7 + 2) : (2 * 7 + 4);
+    int absDiatonic = staffPos + refAbs;
+    int octave = absDiatonic / 7;
+    int diatonic = absDiatonic % 7;
+    if (diatonic < 0) { diatonic += 7; octave--; }
+
+    int basePitch = (octave + 1) * 12 + kChromaFromDiatonic[diatonic];
+
+    // apply key signature alteration to this diatonic degree
+    if (keySig > 0) {
+        for (int i = 0; i < std::min(keySig, 7); i++)
+            if (kSharpOrder[i] == diatonic) { basePitch += 1; break; }
+    } else if (keySig < 0) {
+        for (int i = 0; i < std::min(-keySig, 7); i++)
+            if (kFlatOrder[i] == diatonic) { basePitch -= 1; break; }
+    }
+
+    return basePitch;
+}
+
 // ── NotationModel ────────────────────────────────────────────────────────────
 
 void NotationModel::clear()
@@ -128,8 +162,38 @@ void NotationModel::clear()
     keySig_ = 0;
 }
 
+bool NotationModel::hasStaccato(double beat, int midiNote) const
+{
+    return hasArticulation(beat, midiNote, ArticulationMarking::Staccato);
+}
+
+bool NotationModel::hasArticulation(double beat, int midiNote, ArticulationMarking::Type type) const
+{
+    for (const auto& a : articulations_)
+        if (a.type == type && std::abs(a.beat - beat) < 0.05 && a.midiNote == midiNote)
+            return true;
+    return false;
+}
+
+std::vector<ArticulationMarking::Type> NotationModel::getArticulations(double beat, int midiNote) const
+{
+    std::vector<ArticulationMarking::Type> result;
+    for (const auto& a : articulations_)
+        if (std::abs(a.beat - beat) < 0.05 && a.midiNote == midiNote)
+            result.push_back(a.type);
+    return result;
+}
+
+Accidental NotationModel::getSpellingOverride(double beat, int midiNote) const
+{
+    for (const auto& s : spellingOverrides_)
+        if (std::abs(s.beat - beat) < 0.05 && s.midiNote == midiNote)
+            return s.forced;
+    return Accidental::None;
+}
+
 void NotationModel::buildFromClip(te::MidiClip* clip, int timeSigNum, int timeSigDen,
-                                  int keySig)
+                                  int keySig, bool preferFlats)
 {
     clear();
     if (!clip) return;
@@ -168,7 +232,24 @@ void NotationModel::buildFromClip(te::MidiClip* clip, int timeSigNum, int timeSi
 
         StaffKind staff = (midiPitch >= 60) ? StaffKind::Treble : StaffKind::Bass;
 
-        auto spelling = spellMidiNote(midiPitch, keySig_);
+        auto spelling = spellMidiNote(midiPitch, keySig_, preferFlats);
+
+        Accidental overrideAcc = getSpellingOverride(startBeat, midiPitch);
+        if (overrideAcc == Accidental::Flat) {
+            int aboveChroma = (midiPitch + 1) % 12;
+            static const int kDiaFromChroma[12] = {0,0,1,1,2,3,3,4,4,5,5,6};
+            spelling.diatonic = kDiaFromChroma[aboveChroma];
+            spelling.display = Accidental::Flat;
+        } else if (overrideAcc == Accidental::Sharp) {
+            int belowChroma = (midiPitch - 1 + 12) % 12;
+            static const int kDiaFromChroma[12] = {0,0,1,1,2,3,3,4,4,5,5,6};
+            spelling.diatonic = kDiaFromChroma[belowChroma];
+            spelling.display = Accidental::Sharp;
+        } else if (overrideAcc == Accidental::Natural) {
+            static const int kDiaFromChroma[12] = {0,0,1,1,2,3,3,4,4,5,5,6};
+            spelling.diatonic = kDiaFromChroma[midiPitch % 12];
+            spelling.display = Accidental::Natural;
+        }
 
         NotationNote nn;
         nn.midiNote = midiPitch;
@@ -178,6 +259,7 @@ void NotationModel::buildFromClip(te::MidiClip* clip, int timeSigNum, int timeSi
         nn.stemDirection = stemDirectionForPosition(nn.staffPosition);
         nn.beatInMeasure = beatInMeas;
         nn.value = quantizeDuration(clampedLen, nn.dotted);
+        nn.engineNote = note;
 
         // find or create an event at this beat (for chord grouping)
         auto& bucket = (staff == StaffKind::Treble) ? trebleBuckets[measIdx]
