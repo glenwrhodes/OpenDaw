@@ -7,6 +7,8 @@
 
 **A free, open-source Digital Audio Workstation for Windows**
 
+[![Latest Release](https://img.shields.io/github/v/release/glenwrhodes/OpenDaw?label=Download&style=for-the-badge&color=0078D6&logo=windows)](https://github.com/glenwrhodes/OpenDaw/releases/latest)
+
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](LICENSE)
 [![Platform: Windows](https://img.shields.io/badge/Platform-Windows%2010%2F11-0078D6.svg?logo=windows)](https://github.com/glenwrhodes/OpenDaw)
 [![C++20](https://img.shields.io/badge/C%2B%2B-20-00599C.svg?logo=cplusplus)](https://en.cppreference.com/w/cpp/20)

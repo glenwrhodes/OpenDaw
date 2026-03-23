@@ -1,4 +1,4 @@
-﻿name: Build & Release
+name: Build & Release
 
 on:
   push:
@@ -148,25 +148,26 @@ jobs:
 
   release:
     needs: [build-windows, build-macos]
+    if: always() && !cancelled() && contains(needs.*.result, 'success')
     runs-on: ubuntu-latest
     steps:
-      - name: Extract version from tag
-        id: version
-        run: echo "VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
-
       - name: Download all artifacts
         uses: actions/download-artifact@v4
         with:
           merge-multiple: true
 
+      - name: List downloaded files
+        run: ls -la
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          name: OpenDaw v${{ steps.version.outputs.VERSION }}
+          name: OpenDaw ${{ github.ref_name }}
           draft: false
           prerelease: false
           generate_release_notes: true
+          fail_on_unmatched_files: false
           files: |
-            OpenDaw-v${{ steps.version.outputs.VERSION }}-portable.zip
-            OpenDaw-v${{ steps.version.outputs.VERSION }}-setup.exe
-            OpenDaw-v${{ steps.version.outputs.VERSION }}-mac.dmg
+            OpenDaw-v*-portable.zip
+            OpenDaw-v*-setup.exe
+            OpenDaw-v*-mac.dmg
