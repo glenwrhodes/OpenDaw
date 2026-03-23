@@ -5,12 +5,14 @@
 
 # OpenDaw
 
-**A free, open-source Digital Audio Workstation for Windows**
+**A free, open-source Digital Audio Workstation for Windows, macOS, and Linux**
 
-[![Latest Release](https://img.shields.io/github/v/release/glenwrhodes/OpenDaw?label=Download&style=for-the-badge&color=0078D6&logo=windows)](https://github.com/glenwrhodes/OpenDaw/releases/latest)
+[![Latest Release](https://img.shields.io/github/v/release/glenwrhodes/OpenDaw?label=Download&style=for-the-badge&color=0078D6)](https://github.com/glenwrhodes/OpenDaw/releases/latest)
 
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](LICENSE)
-[![Platform: Windows](https://img.shields.io/badge/Platform-Windows%2010%2F11-0078D6.svg?logo=windows)](https://github.com/glenwrhodes/OpenDaw)
+[![Windows](https://img.shields.io/badge/Windows-0078D6.svg?logo=windows)](https://github.com/glenwrhodes/OpenDaw/releases/latest)
+[![macOS](https://img.shields.io/badge/macOS-000000.svg?logo=apple)](https://github.com/glenwrhodes/OpenDaw/releases/latest)
+[![Linux](https://img.shields.io/badge/Linux-FCC624.svg?logo=linux&logoColor=black)](https://github.com/glenwrhodes/OpenDaw/releases/latest)
 [![C++20](https://img.shields.io/badge/C%2B%2B-20-00599C.svg?logo=cplusplus)](https://en.cppreference.com/w/cpp/20)
 [![Qt 6](https://img.shields.io/badge/Qt-6.8%2B-41CD52.svg?logo=qt)](https://www.qt.io/)
 [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](CONTRIBUTING.md)
@@ -38,10 +40,12 @@ Audio and MIDI tracks, a built-in piano roll, sheet music notation, a destructiv
 
 Grab the latest release from the **[Releases page](https://github.com/glenwrhodes/OpenDaw/releases/latest)**:
 
-| Download | Description |
-|----------|-------------|
-| **OpenDaw-v*x.x.x*-setup.exe** | Windows installer with Start Menu shortcut and uninstaller |
-| **OpenDaw-v*x.x.x*-portable.zip** | Portable build — unzip and run, no installation needed |
+| Download | Platform | Description |
+|----------|----------|-------------|
+| **OpenDaw-v*x.x.x*-setup.exe** | Windows | Installer with Start Menu shortcut and uninstaller |
+| **OpenDaw-v*x.x.x*-portable.zip** | Windows | Portable build — unzip and run, no installation needed |
+| **OpenDaw-v*x.x.x*-mac.dmg** | macOS | Disk image — open and drag to Applications |
+| **OpenDaw-v*x.x.x*-linux-x86_64.AppImage** | Linux | AppImage — `chmod +x` and run, no installation needed |
 
 ---
 
