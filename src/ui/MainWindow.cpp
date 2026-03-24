@@ -626,6 +626,15 @@ void MainWindow::createToolBar()
         sheetMusicToggle->setToolTip("Toggle Sheet Music");
         mainToolBar_->addAction(sheetMusicToggle);
     }
+    {
+        auto* markerTempoToggle = new QAction(miIcon(icons::mi::ShowChart), "Toggle Marker/Tempo Lane", this);
+        markerTempoToggle->setToolTip("Toggle Marker/Tempo Lane");
+        markerTempoToggle->setCheckable(true);
+        connect(markerTempoToggle, &QAction::toggled, this, [this](bool) {
+            if (timelineView_) timelineView_->toggleMarkerTempoLane();
+        });
+        mainToolBar_->addAction(markerTempoToggle);
+    }
     if (aiDock_) {
         auto* aiToggle = aiDock_->toggleViewAction();
         aiToggle->setIcon(miIcon(icons::mi::Chat));

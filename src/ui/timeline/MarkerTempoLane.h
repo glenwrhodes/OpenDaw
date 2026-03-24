@@ -44,20 +44,27 @@ private:
     double pixelsPerBeat_ = 40.0;
     int scrollX_ = 0;
 
-    enum class DragMode { None, DragMarker, DragTempo };
+    enum class DragMode { None, DragMarker, DragTempo, ResizeHeight };
     DragMode dragMode_ = DragMode::None;
     te::MarkerClip* draggedMarker_ = nullptr;
     int draggedTempoIndex_ = -1;
     double dragStartBeat_ = 0.0;
 
-    static constexpr int kLaneHeight = 70;
+    static constexpr int kDefaultHeight = 120;
+    static constexpr int kMinHeight = 60;
+    static constexpr int kMaxHeight = 300;
     static constexpr int kMarkerZoneHeight = 28;
-    static constexpr int kTempoZoneHeight = 42;
+    static constexpr int kResizeGrabHeight = 4;
     static constexpr int kNodeRadius = 5;
     static constexpr double kMinBpm = 20.0;
     static constexpr double kMaxBpm = 300.0;
 
     double playheadBeat_ = 0.0;
+    int laneHeight_ = kDefaultHeight;
+    int resizeStartY_ = 0;
+    int resizeStartHeight_ = 0;
+
+    int tempoZoneHeight() const { return laneHeight_ - kMarkerZoneHeight; }
 };
 
 } // namespace OpenDaw

@@ -145,6 +145,7 @@ namespace mi {
     inline const QChar PlaylistAdd       {0xE03B};
     inline const QChar Refresh           {0xE5D5};
     inline const QChar Settings          {0xE8B8};
+    inline const QChar ShowChart         {0xE6E1};
     inline const QChar Visibility        {0xE8F4};
     inline const QChar VisibilityOff     {0xE8F5};
     inline const QChar ZoomIn            {0xE8FF};
