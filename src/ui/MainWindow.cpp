@@ -839,7 +839,8 @@ void MainWindow::createDocks()
     // File browser dock (right, collapsible)
     browserDock_ = new QDockWidget("Browser", this);
     browserDock_->setAccessibleName("File Browser Dock");
-    fileBrowser_ = new FileBrowserPanel(browserDock_);
+    fileBrowser_ = new FileBrowserPanel(
+        app_.audioEngine().engine().getDeviceManager().deviceManager, browserDock_);
     browserDock_->setWidget(fileBrowser_);
     addDockWidget(Qt::RightDockWidgetArea, browserDock_);
     qDebug() << "[MainWindow] browser dock done";

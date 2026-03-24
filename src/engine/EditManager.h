@@ -113,6 +113,35 @@ public:
     QVector<te::EditItemID> loadTrackDisplayOrder() const;
     juce::Array<te::AudioTrack*> getAudioTracksInDisplayOrder();
 
+    // Track folders (organizational grouping)
+    struct FolderInfo {
+        int id = 0;
+        QString name;
+        bool collapsed = false;
+    };
+
+    struct DisplayItem {
+        enum Type { Folder, Track };
+        Type type = Track;
+        te::AudioTrack* track = nullptr;
+        int folderId = 0;
+        int parentFolderId = 0;
+    };
+
+    int addFolder(const QString& name, te::AudioTrack* insertBefore = nullptr);
+    void removeFolder(int folderId);
+    void renameFolder(int folderId, const QString& name);
+    void setFolderCollapsed(int folderId, bool collapsed);
+    bool isFolderCollapsed(int folderId) const;
+    QString getFolderName(int folderId) const;
+    void moveTrackToFolder(te::AudioTrack* track, int folderId);
+    int getTrackFolderId(te::AudioTrack* track) const;
+    QVector<FolderInfo> getFolders() const;
+    QVector<DisplayItem> getDisplayItems();
+    void saveDisplayItems(const QVector<DisplayItem>& items);
+    void saveRawDisplayOrder(const QStringList& entries);
+    QStringList loadRawDisplayOrder() const;
+
     void midiPanic();
 
     void suspendEngine();

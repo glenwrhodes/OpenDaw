@@ -170,7 +170,8 @@ void ClipItem::updateGeometry(double pixelsPerBeat, double trackHeight, double s
 
     double x = startBeat * pixelsPerBeat;
     double w = (endBeat - startBeat) * pixelsPerBeat;
-    double y = trackIndex_ * trackHeight - scrollY;
+    double y = trackYOffsetFunc_ ? trackYOffsetFunc_(trackIndex_) - scrollY
+                                 : trackIndex_ * trackHeight - scrollY;
 
     setRect(0, 0, w, trackHeight - 2);
     setPos(x, y);
@@ -673,7 +674,7 @@ void ClipItem::mouseMoveEvent(QGraphicsSceneMouseEvent* event)
     newTrack = std::clamp(newTrack, 0, std::max(0, liveTrackCount - 1));
 
     double x = newBeat * ppb;
-    double y = newTrack * th;
+    double y = trackYOffsetFunc_ ? trackYOffsetFunc_(newTrack) : newTrack * th;
     if (duplicateDragging_ && duplicateGhostItem_) {
         duplicateGhostItem_->setPos(x, y);
     } else {
@@ -834,8 +835,10 @@ void ClipItem::mouseReleaseEvent(QGraphicsSceneMouseEvent* event)
                         if (dstTrack) {
                             bool dstIsMidi = editMgr_->isMidiTrack(dstTrack);
                             if (isMidiClip_ != dstIsMidi) {
-                                setPos(dragStartBeat_ * (*pixelsPerBeatPtr_),
-                                       dragStartTrack_ * (*trackHeightPtr_));
+                                double revertY = trackYOffsetFunc_
+                                    ? trackYOffsetFunc_(dragStartTrack_)
+                                    : dragStartTrack_ * (*trackHeightPtr_);
+                                setPos(dragStartBeat_ * (*pixelsPerBeatPtr_), revertY);
                             } else {
                                 dstTrack->addClip(clip_);
                                 trackIndex_ = newTrack;

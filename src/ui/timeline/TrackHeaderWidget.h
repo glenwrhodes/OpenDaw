@@ -31,6 +31,7 @@ public:
     void setAutomationVisible(bool visible);
     void setCollapsed(bool collapsed);
     bool isCollapsed() const { return collapsed_; }
+    void setIndented(bool indented);
     void refresh();
     bool isSelected() const { return selected_; }
     QSize minimumSizeHint() const override;

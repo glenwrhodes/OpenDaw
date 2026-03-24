@@ -3,7 +3,9 @@
 #include "AutomationLaneHeader.h"
 #include "AutomationPointItem.h"
 #include "utils/ThemeManager.h"
+#include "utils/IconFont.h"
 #include <juce_audio_formats/juce_audio_formats.h>
+#include <QPushButton>
 #include <QGraphicsSceneDragDropEvent>
 #include <QGraphicsSceneMouseEvent>
 #include <QGraphicsSceneContextMenuEvent>
@@ -196,6 +198,60 @@ TimelineView::TimelineView(EditManager* editMgr, QWidget* parent)
     QPalette cornerPal;
     cornerPal.setColor(QPalette::Window, theme.surface);
     headerCorner_->setPalette(cornerPal);
+
+    auto* cornerLayout = new QHBoxLayout(headerCorner_);
+    cornerLayout->setContentsMargins(4, 2, 4, 2);
+    cornerLayout->setSpacing(2);
+
+    const int iconSz = 14;
+    const QFont faFont = icons::fontAudio(iconSz);
+    const QFont miFont = icons::materialIcons(iconSz);
+
+    QString cornerBtnStyle = QString(
+        "QPushButton { background: transparent; color: %1; border: 1px solid transparent; "
+        "border-radius: 4px; padding: 2px; }"
+        "QPushButton:hover { background: %2; border: 1px solid %3; }"
+        "QPushButton:pressed { background: %4; }")
+        .arg(theme.accentLight.name(), theme.surfaceLight.name(),
+             theme.border.name(), theme.surface.name());
+
+    auto* addAudioBtn = new QPushButton(headerCorner_);
+    addAudioBtn->setAccessibleName("Add Audio Track");
+    addAudioBtn->setToolTip("Add Audio Track");
+    addAudioBtn->setIcon(icons::glyphIcon(faFont, icons::fa::Waveform, theme.accentLight, iconSz));
+    addAudioBtn->setIconSize(QSize(iconSz, iconSz));
+    addAudioBtn->setFixedSize(24, 24);
+    addAudioBtn->setStyleSheet(cornerBtnStyle);
+    connect(addAudioBtn, &QPushButton::clicked, this, [this]() {
+        editMgr_->addAudioTrack();
+    });
+    cornerLayout->addWidget(addAudioBtn);
+
+    auto* addMidiBtn = new QPushButton(headerCorner_);
+    addMidiBtn->setAccessibleName("Add MIDI Track");
+    addMidiBtn->setToolTip("Add MIDI Track");
+    addMidiBtn->setIcon(icons::glyphIcon(faFont, icons::fa::Keyboard, theme.accentLight, iconSz));
+    addMidiBtn->setIconSize(QSize(iconSz, iconSz));
+    addMidiBtn->setFixedSize(24, 24);
+    addMidiBtn->setStyleSheet(cornerBtnStyle);
+    connect(addMidiBtn, &QPushButton::clicked, this, [this]() {
+        editMgr_->addMidiTrack();
+    });
+    cornerLayout->addWidget(addMidiBtn);
+
+    auto* addFolderBtn = new QPushButton(headerCorner_);
+    addFolderBtn->setAccessibleName("Add Folder");
+    addFolderBtn->setToolTip("Add Folder");
+    addFolderBtn->setIcon(icons::glyphIcon(miFont, icons::mi::CreateNewFolder, theme.accentLight, iconSz));
+    addFolderBtn->setIconSize(QSize(iconSz, iconSz));
+    addFolderBtn->setFixedSize(24, 24);
+    addFolderBtn->setStyleSheet(cornerBtnStyle);
+    connect(addFolderBtn, &QPushButton::clicked, this, [this]() {
+        editMgr_->addFolder("New Folder");
+    });
+    cornerLayout->addWidget(addFolderBtn);
+
+    cornerLayout->addStretch();
     topRowLayout_->addWidget(headerCorner_);
 
     ruler_ = new TimeRuler(topRow);
@@ -378,15 +434,20 @@ TimelineView::TimelineView(EditManager* editMgr, QWidget* parent)
                 QMenu menu;
                 menu.setAccessibleName("Timeline Context Menu");
 
+                int trackIdx = trackIndexAtSceneY(scenePos.y());
+                auto tracks = getVisibleTracks();
+                te::AudioTrack* clickedTrack = (trackIdx >= 0 && trackIdx < tracks.size())
+                                                ? tracks[trackIdx] : nullptr;
+
                 menu.addAction("Add Audio Track", [this]() {
                     editMgr_->addAudioTrack();
                 });
                 menu.addAction("Add MIDI Track", [this]() {
                     editMgr_->addMidiTrack();
                 });
-
-                int trackIdx = trackIndexAtSceneY(scenePos.y());
-                auto tracks = editMgr_->getAudioTracksInDisplayOrder();
+                menu.addAction("Add Folder", [this, clickedTrack]() {
+                    editMgr_->addFolder("New Folder", clickedTrack);
+                });
                 if (trackIdx >= 0 && trackIdx < tracks.size()) {
                     auto* track = tracks[trackIdx];
                     bool isMidi = editMgr_->isMidiTrack(track);
@@ -425,6 +486,28 @@ TimelineView::TimelineView(EditManager* editMgr, QWidget* parent)
                         });
                     }
 
+                    // Folder assignment submenu
+                    auto folders = editMgr_->getFolders();
+                    if (!folders.isEmpty() || editMgr_->getTrackFolderId(track) > 0) {
+                        auto* folderMenu = menu.addMenu("Move to Folder");
+                        folderMenu->setAccessibleName("Move to Folder Menu");
+                        int currentFolderId = editMgr_->getTrackFolderId(track);
+                        if (currentFolderId > 0) {
+                            folderMenu->addAction("Root Level (No Folder)", [this, track]() {
+                                editMgr_->moveTrackToFolder(track, 0);
+                                emit editMgr_->tracksChanged();
+                            });
+                            folderMenu->addSeparator();
+                        }
+                        for (auto& f : folders) {
+                            if (f.id == currentFolderId) continue;
+                            folderMenu->addAction(f.name, [this, track, fid = f.id]() {
+                                editMgr_->moveTrackToFolder(track, fid);
+                                emit editMgr_->tracksChanged();
+                            });
+                        }
+                    }
+
                     menu.addAction("Remove Track", [this, track]() {
                         auto answer = QMessageBox::question(
                             this, "Remove Track",
@@ -460,17 +543,26 @@ TimelineView::TimelineView(EditManager* editMgr, QWidget* parent)
         }
         automationLaneHeaders_.clear();
 
+        for (auto* h : folderHeaders_) {
+            headerVLayout_->removeWidget(h);
+            delete h;
+        }
+        folderHeaders_.clear();
+
         for (auto* h : trackHeaders_) {
             headerVLayout_->removeWidget(h);
             delete h;
         }
         trackHeaders_.clear();
 
+        orderedHeaders_.clear();
+
         for (auto* item : clipItems_) scene_->removeItem(item);
         qDeleteAll(clipItems_);
         clipItems_.clear();
 
         layout_.clear();
+        folderDividers_.clear();
     });
     qDebug() << "[TimelineView] ctor: edit signals connected";
 
@@ -606,7 +698,7 @@ bool TimelineView::eventFilter(QObject* watched, QEvent* event)
             }
             if (keyEvent->key() == Qt::Key_A && selectedTrack_) {
                 int trackIdx = -1;
-                auto tracks = editMgr_->getAudioTracksInDisplayOrder();
+                auto tracks = getVisibleTracks();
                 for (int i = 0; i < tracks.size(); ++i) {
                     if (tracks[i] == selectedTrack_) { trackIdx = i; break; }
                 }
@@ -654,6 +746,9 @@ void TimelineView::onEditChanged()
 
 void TimelineView::onTracksChanged()
 {
+    if (insideTracksChanged_) return;
+    insideTracksChanged_ = true;
+
     qDebug() << "[TimelineView] onTracksChanged start";
     auto tracks = editMgr_->getAudioTracks();
     bool selectedTrackStillExists = false;
@@ -672,51 +767,96 @@ void TimelineView::onTracksChanged()
     qDebug() << "[TimelineView] about to rebuildTrackHeaders";
     rebuildTrackHeaders();
 
-    // Clean up display order to remove deleted track IDs
-    auto displayOrder = editMgr_->loadTrackDisplayOrder();
-    if (!displayOrder.isEmpty()) {
+    // Clean up display order to remove deleted track IDs (preserving folder entries)
+    auto rawOrder = editMgr_->loadRawDisplayOrder();
+    if (!rawOrder.isEmpty()) {
         auto currentTracks = editMgr_->getAudioTracks();
-        QVector<te::EditItemID> cleanedOrder;
-        for (auto& id : displayOrder) {
-            for (auto* t : currentTracks) {
-                if (t->itemID == id) {
-                    cleanedOrder.append(id);
-                    break;
+        QStringList cleanedOrder;
+        for (auto& entry : rawOrder) {
+            if (entry.startsWith("f")) {
+                cleanedOrder.append(entry);
+            } else {
+                uint64_t rawId = entry.toULongLong();
+                for (auto* t : currentTracks) {
+                    if (t->itemID.getRawID() == rawId) {
+                        cleanedOrder.append(entry);
+                        break;
+                    }
                 }
             }
         }
-        if (cleanedOrder.size() != displayOrder.size())
-            editMgr_->saveTrackDisplayOrder(cleanedOrder);
+        if (cleanedOrder.size() != rawOrder.size())
+            editMgr_->saveRawDisplayOrder(cleanedOrder);
     }
 
     qDebug() << "[TimelineView] onTracksChanged done";
+    insideTracksChanged_ = false;
 }
 
 void TimelineView::rebuildTrackHeaders()
 {
     qDebug() << "[rebuildTrackHeaders] start";
 
-    // Clean up old track headers
     for (auto* h : trackHeaders_) {
         headerVLayout_->removeWidget(h);
         delete h;
     }
     trackHeaders_.clear();
 
-    // Clean up old automation lane headers (don't rely on cleanupAutomationItems)
+    for (auto* h : folderHeaders_) {
+        headerVLayout_->removeWidget(h);
+        delete h;
+    }
+    folderHeaders_.clear();
+
     for (auto* h : automationLaneHeaders_) {
         headerVLayout_->removeWidget(h);
         delete h;
     }
     automationLaneHeaders_.clear();
+    orderedHeaders_.clear();
 
     if (!editMgr_ || !editMgr_->edit()) return;
 
-    auto tracks = editMgr_->getAudioTracksInDisplayOrder();
-    for (int i = 0; i < tracks.size(); ++i) {
-        auto* track = tracks[i];
-        qDebug() << "[rebuildTrackHeaders] creating header" << i
+    auto displayItems = editMgr_->getDisplayItems();
+    int trackLayoutIdx = 0;
+
+    for (auto& item : displayItems) {
+        if (item.type == EditManager::DisplayItem::Folder) {
+            auto* fh = new FolderHeaderWidget(item.folderId, editMgr_, headerContainer_);
+            connect(fh, &FolderHeaderWidget::collapseToggled,
+                    this, [this](int, bool) {
+                        QTimer::singleShot(0, this, [this]() {
+                            rebuildLayout();
+                            rebuildClips();
+                            rebuildTrackHeaders();
+                        });
+                    });
+            connect(fh, &FolderHeaderWidget::dragStarted,
+                    this, &TimelineView::onFolderDragStarted);
+            connect(fh, &FolderHeaderWidget::dragMoved,
+                    this, &TimelineView::onFolderDragMoved);
+            connect(fh, &FolderHeaderWidget::dragFinished,
+                    this, &TimelineView::onFolderDragFinished);
+            headerVLayout_->addWidget(fh);
+            folderHeaders_.push_back(fh);
+
+            OrderedHeader oh;
+            oh.isFolder = true;
+            oh.folderId = item.folderId;
+            oh.widget = fh;
+            orderedHeaders_.push_back(oh);
+            continue;
+        }
+
+        // Skip tracks hidden by collapsed parent folder
+        if (item.parentFolderId > 0 && editMgr_->isFolderCollapsed(item.parentFolderId))
+            continue;
+
+        auto* track = item.track;
+        qDebug() << "[rebuildTrackHeaders] creating header" << trackLayoutIdx
                  << QString::fromStdString(track->getName().toStdString());
+
         auto* header = new TrackHeaderWidget(track, editMgr_, headerContainer_);
         connect(header, &TrackHeaderWidget::instrumentSelectRequested,
                 this, &TimelineView::instrumentSelectRequested);
@@ -734,31 +874,42 @@ void TimelineView::rebuildTrackHeaders()
                 this, &TimelineView::onTrackDragFinished);
         header->setSelected(track == selectedTrack_);
 
-        if (i < static_cast<int>(layout_.size())) {
-            header->setCollapsed(layout_[i].collapsed);
-            header->setAutomationVisible(layout_[i].automationVisible);
+        if (item.parentFolderId > 0)
+            header->setIndented(true);
+
+        if (trackLayoutIdx < static_cast<int>(layout_.size())) {
+            header->setCollapsed(layout_[trackLayoutIdx].collapsed);
+            header->setAutomationVisible(layout_[trackLayoutIdx].automationVisible);
         }
 
         headerVLayout_->addWidget(header);
         trackHeaders_.push_back(header);
 
-        if (i < static_cast<int>(layout_.size()) && layout_[i].automationVisible && !layout_[i].collapsed) {
+        OrderedHeader oh;
+        oh.isFolder = false;
+        oh.track = track;
+        oh.widget = header;
+        orderedHeaders_.push_back(oh);
+
+        if (trackLayoutIdx < static_cast<int>(layout_.size())
+            && layout_[trackLayoutIdx].automationVisible
+            && !layout_[trackLayoutIdx].collapsed) {
             auto* laneHeader = new AutomationLaneHeader(track, editMgr_, headerContainer_);
-            int idx = i;
+            int idx = trackLayoutIdx;
             connect(laneHeader, &AutomationLaneHeader::parameterChanged,
                     this, [this, idx](te::AutomatableParameter* p) {
                         onAutomationParamChanged(idx, p);
                     });
             connect(laneHeader, &AutomationLaneHeader::closeRequested,
                     this, [this, track]() { toggleAutomation(track, false); });
-            laneHeader->setLaneHeight(int(layout_[i].automationLaneHeight));
-
-            // Sync combo box to the currently displayed parameter
-            laneHeader->selectParam(layout_[i].shownParam);
+            laneHeader->setLaneHeight(int(layout_[trackLayoutIdx].automationLaneHeight));
+            laneHeader->selectParam(layout_[trackLayoutIdx].shownParam);
 
             headerVLayout_->addWidget(laneHeader);
             automationLaneHeaders_.push_back(laneHeader);
         }
+
+        trackLayoutIdx++;
     }
 
     int minNeeded = 0;
@@ -810,25 +961,26 @@ void TimelineView::toggleMarkerTempoLane()
 void TimelineView::onTrackDragStarted(TrackHeaderWidget* header)
 {
     reorderDragSourceIndex_ = -1;
-    for (int i = 0; i < static_cast<int>(trackHeaders_.size()); ++i) {
-        if (trackHeaders_[i] == header) {
+    for (int i = 0; i < static_cast<int>(orderedHeaders_.size()); ++i) {
+        if (orderedHeaders_[i].widget == header) {
             reorderDragSourceIndex_ = i;
             break;
         }
     }
     reorderCurrentIndex_ = reorderDragSourceIndex_;
+    reorderGroupSize_ = 1;
 
     if (!reorderGhost_ && header->track()) {
-        reorderGhost_ = new QLabel(this);
+        reorderGhost_ = new QLabel(nullptr);
+        reorderGhost_->setWindowFlags(Qt::ToolTip | Qt::FramelessWindowHint);
         reorderGhost_->setAttribute(Qt::WA_TransparentForMouseEvents);
         QString name = QString::fromStdString(header->track()->getName().toStdString());
         reorderGhost_->setText(name);
         reorderGhost_->setStyleSheet(
-            "QLabel { background: rgba(0,168,150,180); color: #fff; "
-            "font-size: 11px; font-weight: bold; padding: 4px 10px; "
+            "QLabel { background: rgba(0,168,150,200); color: #fff; "
+            "font-size: 11px; font-weight: bold; padding: 4px 12px; "
             "border-radius: 4px; }");
         reorderGhost_->adjustSize();
-        reorderGhost_->raise();
         reorderGhost_->show();
     }
 }
@@ -836,19 +988,37 @@ void TimelineView::onTrackDragStarted(TrackHeaderWidget* header)
 void TimelineView::onTrackDragMoved(TrackHeaderWidget* /*header*/, int globalY)
 {
     if (reorderDragSourceIndex_ < 0) return;
-    int n = static_cast<int>(trackHeaders_.size());
+    int n = static_cast<int>(orderedHeaders_.size());
     if (n <= 1) return;
+    reorderLastGlobalY_ = globalY;
 
-    if (reorderGhost_) {
-        QPoint localPos = mapFromGlobal(QPoint(20, globalY - 10));
-        reorderGhost_->move(localPos);
-    }
+    if (reorderGhost_)
+        reorderGhost_->move(QPoint(QCursor::pos().x() + 15, globalY - 10));
 
     QPoint containerPos = headerContainer_->mapFromGlobal(QPoint(0, globalY));
+
+    // Highlight folder under cursor, clear others
+    for (auto* fh : folderHeaders_) {
+        bool over = containerPos.y() >= fh->geometry().top()
+                 && containerPos.y() <= fh->geometry().bottom();
+        fh->setDropHighlight(over);
+    }
+
+    // If cursor is over a folder header, don't reorder -- just hold
+    // position and let the highlight indicate a drop target.
+    for (int i = 0; i < n; ++i) {
+        if (i == reorderCurrentIndex_) continue;
+        if (!orderedHeaders_[i].isFolder) continue;
+        auto* w = orderedHeaders_[i].widget;
+        if (containerPos.y() >= w->geometry().top()
+            && containerPos.y() <= w->geometry().bottom())
+            return;
+    }
+
     int targetIndex = n - 1;
     for (int i = 0; i < n; ++i) {
-        auto* h = trackHeaders_[i];
-        int mid = h->geometry().top() + h->height() / 2;
+        auto* w = orderedHeaders_[i].widget;
+        int mid = w->geometry().top() + w->height() / 2;
         if (containerPos.y() < mid) {
             targetIndex = i;
             break;
@@ -858,21 +1028,165 @@ void TimelineView::onTrackDragMoved(TrackHeaderWidget* /*header*/, int globalY)
 
     if (targetIndex == reorderCurrentIndex_) return;
 
-    auto* movingHeader = trackHeaders_[reorderCurrentIndex_];
-    trackHeaders_.erase(trackHeaders_.begin() + reorderCurrentIndex_);
-    trackHeaders_.insert(trackHeaders_.begin() + targetIndex, movingHeader);
+    auto moving = orderedHeaders_[reorderCurrentIndex_];
+    orderedHeaders_.erase(orderedHeaders_.begin() + reorderCurrentIndex_);
+    orderedHeaders_.insert(orderedHeaders_.begin() + targetIndex, moving);
 
-    for (auto* h : trackHeaders_)
-        headerVLayout_->removeWidget(h);
+    // Rebuild layout and reapply indent based on current positions
+    for (auto& oh : orderedHeaders_)
+        headerVLayout_->removeWidget(oh.widget);
     for (auto* h : automationLaneHeaders_)
         headerVLayout_->removeWidget(h);
-    for (auto* h : trackHeaders_)
-        headerVLayout_->addWidget(h);
+
+    int currentFolder = 0;
+    for (auto& oh : orderedHeaders_) {
+        if (oh.isFolder) {
+            currentFolder = oh.folderId;
+        } else if (oh.track) {
+            auto* th = qobject_cast<TrackHeaderWidget*>(oh.widget);
+            if (th) {
+                int fid = editMgr_->getTrackFolderId(oh.track);
+                bool inFolder = (fid > 0) || (currentFolder > 0 && oh.widget == moving.widget);
+                th->setIndented(inFolder);
+            }
+        }
+        headerVLayout_->addWidget(oh.widget);
+    }
 
     reorderCurrentIndex_ = targetIndex;
 }
 
 void TimelineView::onTrackDragFinished(TrackHeaderWidget* /*header*/)
+{
+    // Clear folder highlights
+    for (auto* fh : folderHeaders_)
+        fh->setDropHighlight(false);
+
+    // Check if the drop landed on a folder header
+    reorderDroppedOnFolder_ = false;
+    reorderDropFolderId_ = 0;
+    if (reorderLastGlobalY_ != 0 && reorderCurrentIndex_ >= 0) {
+        QPoint containerPos = headerContainer_->mapFromGlobal(
+            QPoint(0, reorderLastGlobalY_));
+        for (int fi = 0; fi < static_cast<int>(orderedHeaders_.size()); ++fi) {
+            if (!orderedHeaders_[fi].isFolder) continue;
+            if (fi == reorderCurrentIndex_) continue;
+            auto* w = orderedHeaders_[fi].widget;
+            if (containerPos.y() >= w->geometry().top()
+                && containerPos.y() <= w->geometry().bottom()) {
+                reorderDroppedOnFolder_ = true;
+                reorderDropFolderId_ = orderedHeaders_[fi].folderId;
+
+                // Place dragged entry right after this folder header
+                if (reorderCurrentIndex_ != fi + 1) {
+                    auto moving = orderedHeaders_[reorderCurrentIndex_];
+                    orderedHeaders_.erase(orderedHeaders_.begin() + reorderCurrentIndex_);
+                    int insertAt = (reorderCurrentIndex_ < fi) ? fi : fi + 1;
+                    insertAt = std::clamp(insertAt, 0,
+                        static_cast<int>(orderedHeaders_.size()));
+                    orderedHeaders_.insert(orderedHeaders_.begin() + insertAt, moving);
+                    reorderCurrentIndex_ = insertAt;
+                }
+                break;
+            }
+        }
+    }
+
+    commitReorder();
+}
+
+void TimelineView::onFolderDragStarted(FolderHeaderWidget* header)
+{
+    reorderDragSourceIndex_ = -1;
+    for (int i = 0; i < static_cast<int>(orderedHeaders_.size()); ++i) {
+        if (orderedHeaders_[i].widget == header) {
+            reorderDragSourceIndex_ = i;
+            break;
+        }
+    }
+    reorderCurrentIndex_ = reorderDragSourceIndex_;
+
+    // Count the folder + its children as a group
+    reorderGroupSize_ = 1;
+    if (reorderDragSourceIndex_ >= 0) {
+        int fid = orderedHeaders_[reorderDragSourceIndex_].folderId;
+        for (int j = reorderDragSourceIndex_ + 1; j < static_cast<int>(orderedHeaders_.size()); ++j) {
+            if (orderedHeaders_[j].isFolder) break;
+            if (orderedHeaders_[j].track && editMgr_->getTrackFolderId(orderedHeaders_[j].track) == fid)
+                reorderGroupSize_++;
+            else
+                break;
+        }
+    }
+
+    if (!reorderGhost_) {
+        reorderGhost_ = new QLabel(nullptr);
+        reorderGhost_->setWindowFlags(Qt::ToolTip | Qt::FramelessWindowHint);
+        reorderGhost_->setAttribute(Qt::WA_TransparentForMouseEvents);
+        QString name = editMgr_->getFolderName(header->folderId());
+        reorderGhost_->setText(name);
+        reorderGhost_->setStyleSheet(
+            "QLabel { background: rgba(200,160,40,200); color: #fff; "
+            "font-size: 11px; font-weight: bold; padding: 4px 12px; "
+            "border-radius: 4px; }");
+        reorderGhost_->adjustSize();
+        reorderGhost_->show();
+    }
+}
+
+void TimelineView::onFolderDragMoved(FolderHeaderWidget* /*header*/, int globalY)
+{
+    if (reorderDragSourceIndex_ < 0) return;
+    int n = static_cast<int>(orderedHeaders_.size());
+    if (n <= 1) return;
+    reorderLastGlobalY_ = globalY;
+
+    if (reorderGhost_)
+        reorderGhost_->move(QPoint(QCursor::pos().x() + 15, globalY - 10));
+
+    QPoint containerPos = headerContainer_->mapFromGlobal(QPoint(0, globalY));
+    int targetIndex = n - reorderGroupSize_;
+    for (int i = 0; i < n; ++i) {
+        auto* w = orderedHeaders_[i].widget;
+        int mid = w->geometry().top() + w->height() / 2;
+        if (containerPos.y() < mid) {
+            targetIndex = i;
+            break;
+        }
+    }
+    targetIndex = std::clamp(targetIndex, 0, n - reorderGroupSize_);
+
+    if (targetIndex == reorderCurrentIndex_) return;
+
+    // Move the folder group as a unit
+    std::vector<OrderedHeader> group(
+        orderedHeaders_.begin() + reorderCurrentIndex_,
+        orderedHeaders_.begin() + reorderCurrentIndex_ + reorderGroupSize_);
+    orderedHeaders_.erase(
+        orderedHeaders_.begin() + reorderCurrentIndex_,
+        orderedHeaders_.begin() + reorderCurrentIndex_ + reorderGroupSize_);
+    if (targetIndex > reorderCurrentIndex_)
+        targetIndex -= reorderGroupSize_;
+    targetIndex = std::clamp(targetIndex, 0, static_cast<int>(orderedHeaders_.size()));
+    orderedHeaders_.insert(orderedHeaders_.begin() + targetIndex,
+                           group.begin(), group.end());
+
+    for (auto& oh : orderedHeaders_)
+        headerVLayout_->removeWidget(oh.widget);
+    for (auto* h : automationLaneHeaders_)
+        headerVLayout_->removeWidget(h);
+    for (auto& oh : orderedHeaders_)
+        headerVLayout_->addWidget(oh.widget);
+
+    reorderCurrentIndex_ = targetIndex;
+}
+
+void TimelineView::onFolderDragFinished(FolderHeaderWidget* /*header*/)
+{
+    commitReorder();
+}
+
+void TimelineView::commitReorder()
 {
     if (reorderGhost_) {
         delete reorderGhost_;
@@ -882,67 +1196,169 @@ void TimelineView::onTrackDragFinished(TrackHeaderWidget* /*header*/)
     if (reorderDragSourceIndex_ < 0 || !editMgr_ || !editMgr_->edit()) {
         reorderDragSourceIndex_ = -1;
         reorderCurrentIndex_ = -1;
+        reorderGroupSize_ = 1;
+        reorderDroppedOnFolder_ = false;
+        reorderDropFolderId_ = 0;
+        reorderLastGlobalY_ = 0;
         return;
     }
 
-    if (reorderCurrentIndex_ != reorderDragSourceIndex_) {
-        QVector<te::EditItemID> newOrder;
-        for (auto* h : trackHeaders_) {
-            if (h->track())
-                newOrder.append(h->track()->itemID);
+    if (reorderCurrentIndex_ != reorderDragSourceIndex_
+        || reorderDroppedOnFolder_) {
+        // For single track drags: update ONLY the dragged track's folder.
+        if (reorderGroupSize_ == 1) {
+            auto& dragged = orderedHeaders_[reorderCurrentIndex_];
+            if (!dragged.isFolder && dragged.track) {
+                int newFolderId = 0;
+
+                // If dropped on a folder header, join that folder
+                if (reorderDroppedOnFolder_) {
+                    newFolderId = reorderDropFolderId_;
+                } else if (reorderCurrentIndex_ > 0) {
+                    // Otherwise derive from previous entry
+                    auto& prev = orderedHeaders_[reorderCurrentIndex_ - 1];
+                    if (prev.isFolder)
+                        newFolderId = prev.folderId;
+                    else if (prev.track)
+                        newFolderId = editMgr_->getTrackFolderId(prev.track);
+                }
+                editMgr_->moveTrackToFolder(dragged.track, newFolderId);
+            }
         }
-        editMgr_->saveTrackDisplayOrder(newOrder);
-        emit editMgr_->tracksChanged();
+        // For folder drags (reorderGroupSize_ > 1): no membership changes.
+
+        // Build display order from visible headers, re-inserting hidden
+        // children of collapsed folders so they aren't lost.
+        // Use a set to prevent any track appearing twice.
+        QSet<uint64_t> addedTrackIds;
+
+        auto allItems = editMgr_->getDisplayItems();
+        QMap<int, QVector<EditManager::DisplayItem>> hiddenChildren;
+        for (auto& fi : allItems) {
+            if (fi.type == EditManager::DisplayItem::Track
+                && fi.parentFolderId > 0
+                && editMgr_->isFolderCollapsed(fi.parentFolderId)) {
+                hiddenChildren[fi.parentFolderId].append(fi);
+            }
+        }
+
+        QVector<EditManager::DisplayItem> newItems;
+        for (auto& oh : orderedHeaders_) {
+            EditManager::DisplayItem di;
+            if (oh.isFolder) {
+                di.type = EditManager::DisplayItem::Folder;
+                di.folderId = oh.folderId;
+                newItems.append(di);
+                if (hiddenChildren.contains(oh.folderId)) {
+                    for (auto& hidden : hiddenChildren[oh.folderId]) {
+                        uint64_t tid = hidden.track->itemID.getRawID();
+                        if (!addedTrackIds.contains(tid)) {
+                            newItems.append(hidden);
+                            addedTrackIds.insert(tid);
+                        }
+                    }
+                }
+            } else if (oh.track) {
+                uint64_t tid = oh.track->itemID.getRawID();
+                if (!addedTrackIds.contains(tid)) {
+                    di.type = EditManager::DisplayItem::Track;
+                    di.track = oh.track;
+                    di.parentFolderId = editMgr_->getTrackFolderId(oh.track);
+                    newItems.append(di);
+                    addedTrackIds.insert(tid);
+                }
+            }
+        }
+        editMgr_->saveDisplayItems(newItems);
     }
 
     reorderDragSourceIndex_ = -1;
     reorderCurrentIndex_ = -1;
+    reorderGroupSize_ = 1;
+    reorderDroppedOnFolder_ = false;
+    reorderDropFolderId_ = 0;
+    reorderLastGlobalY_ = 0;
 
     onTracksChanged();
+}
+
+juce::Array<te::AudioTrack*> TimelineView::getVisibleTracks() const
+{
+    juce::Array<te::AudioTrack*> result;
+    if (!editMgr_ || !editMgr_->edit()) return result;
+    auto items = editMgr_->getDisplayItems();
+    for (auto& item : items) {
+        if (item.type != EditManager::DisplayItem::Track) continue;
+        if (item.parentFolderId > 0 && editMgr_->isFolderCollapsed(item.parentFolderId))
+            continue;
+        result.add(item.track);
+    }
+    return result;
 }
 
 void TimelineView::rebuildLayout()
 {
     if (!editMgr_ || !editMgr_->edit()) {
         layout_.clear();
+        folderDividers_.clear();
         return;
     }
 
-    auto tracks = editMgr_->getAudioTracksInDisplayOrder();
-    int numTracks = tracks.size();
+    auto displayItems = editMgr_->getDisplayItems();
 
-    std::vector<TrackLayoutInfo> oldLayout = layout_;
-    layout_.resize(numTracks);
+    // Save old layout state keyed by track ID
+    std::map<uint64_t, TrackLayoutInfo> oldStateById;
+    auto oldVisibleTracks = getVisibleTracks();
+    for (int i = 0; i < static_cast<int>(layout_.size()) && i < oldVisibleTracks.size(); ++i)
+        oldStateById[oldVisibleTracks[i]->itemID.getRawID()] = layout_[i];
 
-    for (int i = 0; i < numTracks; ++i) {
-        layout_[i].trackIndex = i;
-
-        if (i < static_cast<int>(oldLayout.size())) {
-            layout_[i].automationVisible = oldLayout[i].automationVisible;
-            layout_[i].automationLaneHeight = oldLayout[i].automationLaneHeight;
-            layout_[i].shownParam = oldLayout[i].shownParam;
-            layout_[i].collapsed = oldLayout[i].collapsed;
-            layout_[i].clipRowHeight = oldLayout[i].clipRowHeight;
-        } else {
-            layout_[i].automationVisible = false;
-            layout_[i].automationLaneHeight = kDefaultLaneHeight;
-            layout_[i].shownParam = nullptr;
-            layout_[i].collapsed = false;
-            layout_[i].clipRowHeight = trackHeight_;
-        }
-
-        if (!layout_[i].collapsed)
-            layout_[i].clipRowHeight = trackHeight_;
-
-        if (layout_[i].automationVisible && !layout_[i].shownParam) {
-            layout_[i].shownParam = editMgr_->getVolumeParam(tracks[i]);
-        }
-    }
+    layout_.clear();
+    folderDividers_.clear();
 
     double y = 0.0;
-    for (int i = 0; i < numTracks; ++i) {
-        layout_[i].yOffset = y;
-        y += layout_[i].totalHeight();
+    int trackLayoutIdx = 0;
+
+    for (auto& item : displayItems) {
+        if (item.type == EditManager::DisplayItem::Folder) {
+            FolderDividerInfo div;
+            div.folderId = item.folderId;
+            div.yOffset = y;
+            folderDividers_.push_back(div);
+            y += FolderDividerInfo::kHeight;
+            continue;
+        }
+
+        if (item.parentFolderId > 0 && editMgr_->isFolderCollapsed(item.parentFolderId))
+            continue;
+
+        TrackLayoutInfo info;
+        info.trackIndex = trackLayoutIdx;
+
+        auto it = oldStateById.find(item.track->itemID.getRawID());
+        if (it != oldStateById.end()) {
+            info.automationVisible = it->second.automationVisible;
+            info.automationLaneHeight = it->second.automationLaneHeight;
+            info.shownParam = it->second.shownParam;
+            info.collapsed = it->second.collapsed;
+            info.clipRowHeight = it->second.clipRowHeight;
+        } else {
+            info.automationVisible = false;
+            info.automationLaneHeight = kDefaultLaneHeight;
+            info.shownParam = nullptr;
+            info.collapsed = false;
+            info.clipRowHeight = trackHeight_;
+        }
+
+        if (!info.collapsed)
+            info.clipRowHeight = trackHeight_;
+
+        if (info.automationVisible && !info.shownParam)
+            info.shownParam = editMgr_->getVolumeParam(item.track);
+
+        info.yOffset = y;
+        layout_.push_back(info);
+        y += info.totalHeight();
+        trackLayoutIdx++;
     }
 }
 
@@ -989,7 +1405,7 @@ void TimelineView::rebuildAutomationLanes(double sceneWidth)
     cleanupAutomationItems();
     if (!editMgr_ || !editMgr_->edit()) return;
 
-    auto tracks = editMgr_->getAudioTracksInDisplayOrder();
+    auto tracks = getVisibleTracks();
     auto& theme = ThemeManager::instance().current();
 
     for (int i = 0; i < static_cast<int>(layout_.size()); ++i) {
@@ -1027,15 +1443,13 @@ void TimelineView::rebuildAutomationLanes(double sceneWidth)
 void TimelineView::toggleAutomation(te::AudioTrack* track, bool visible)
 {
     if (!editMgr_) return;
-    auto tracks = editMgr_->getAudioTracksInDisplayOrder();
-    for (int i = 0; i < tracks.size(); ++i) {
-        if (tracks[i] == track && i < static_cast<int>(layout_.size())) {
+    auto visTracks = getVisibleTracks();
+    for (int i = 0; i < visTracks.size(); ++i) {
+        if (visTracks[i] == track && i < static_cast<int>(layout_.size())) {
             layout_[i].automationVisible = visible;
             if (visible && !layout_[i].shownParam)
                 layout_[i].shownParam = editMgr_->getVolumeParam(track);
 
-            // Defer rebuild so the button click handler that triggered this
-            // finishes before we delete its owning TrackHeaderWidget.
             QTimer::singleShot(0, this, [this]() {
                 rebuildLayout();
                 rebuildClips();
@@ -1049,9 +1463,9 @@ void TimelineView::toggleAutomation(te::AudioTrack* track, bool visible)
 void TimelineView::toggleCollapse(te::AudioTrack* track, bool collapsed)
 {
     if (!editMgr_) return;
-    auto tracks = editMgr_->getAudioTracksInDisplayOrder();
-    for (int i = 0; i < tracks.size(); ++i) {
-        if (tracks[i] == track && i < static_cast<int>(layout_.size())) {
+    auto visTracks = getVisibleTracks();
+    for (int i = 0; i < visTracks.size(); ++i) {
+        if (visTracks[i] == track && i < static_cast<int>(layout_.size())) {
             layout_[i].collapsed = collapsed;
             layout_[i].clipRowHeight = collapsed ? kCollapsedTrackHeight : trackHeight_;
 
@@ -1100,7 +1514,7 @@ void TimelineView::rebuildClips()
 
     rebuildLayout();
 
-    auto tracks = editMgr_->getAudioTracksInDisplayOrder();
+    auto tracks = getVisibleTracks();
     int numTracks = tracks.size();
     qDebug() << "[rebuildClips] numTracks:" << numTracks;
 
@@ -1118,11 +1532,64 @@ void TimelineView::rebuildClips()
     double sceneHeight = 0.0;
     if (!layout_.empty())
         sceneHeight = layout_.back().yOffset + layout_.back().totalHeight();
-    else
+    if (!folderDividers_.empty()) {
+        double folderBottom = folderDividers_.back().yOffset + FolderDividerInfo::kHeight;
+        sceneHeight = std::max(sceneHeight, folderBottom);
+    }
+    if (sceneHeight <= 0.0)
         sceneHeight = numTracks * trackHeight_;
     scene_->setSceneRect(0, 0, sceneWidth, std::max(sceneHeight, double(height())));
 
     playheadLine_->setLine(0, 0, 0, sceneHeight);
+
+    // Draw folder divider backgrounds and collapsed clip previews
+    QColor folderBg = theme.surface.lighter(112);
+    QPen folderBorder(QColor(255, 185, 50, 80), 1.0);
+    for (auto& div : folderDividers_) {
+        auto* bgItem = scene_->addRect(0, div.yOffset, sceneWidth,
+                                        FolderDividerInfo::kHeight,
+                                        folderBorder, QBrush(folderBg));
+        bgItem->setZValue(-1.5);
+        trackBgItems_.push_back(bgItem);
+
+        if (!editMgr_->isFolderCollapsed(div.folderId)) continue;
+
+        // Gather child tracks and draw mini clip rectangles
+        auto allTracks = editMgr_->getAudioTracks();
+        int childCount = 0;
+        for (auto* t : allTracks)
+            if (editMgr_->getTrackFolderId(t) == div.folderId)
+                childCount++;
+        if (childCount == 0) continue;
+
+        double laneH = FolderDividerInfo::kHeight - 4.0;
+        double perTrackH = std::max(2.0, std::min(laneH / childCount, 6.0));
+        int childIdx = 0;
+
+        for (auto* t : allTracks) {
+            if (editMgr_->getTrackFolderId(t) != div.folderId) continue;
+            bool isMidi = editMgr_->isMidiTrack(t);
+            QColor clipColor = isMidi ? theme.midiClipBody.lighter(120)
+                                      : theme.clipBody.lighter(120);
+            clipColor.setAlpha(180);
+            double clipY = div.yOffset + 2.0 + childIdx * perTrackH;
+
+            auto& ts = editMgr_->edit()->tempoSequence;
+            for (auto* clip : t->getClips()) {
+                double startBeat = ts.toBeats(clip->getPosition().getStart()).inBeats();
+                double endBeat = ts.toBeats(clip->getPosition().getEnd()).inBeats();
+                double cx = startBeat * pixelsPerBeat_;
+                double cw = std::max(2.0, (endBeat - startBeat) * pixelsPerBeat_);
+
+                auto* miniClip = scene_->addRect(
+                    cx, clipY, cw, std::max(1.5, perTrackH - 0.5),
+                    QPen(Qt::NoPen), QBrush(clipColor));
+                miniClip->setZValue(-1.0);
+                trackBgItems_.push_back(miniClip);
+            }
+            childIdx++;
+        }
+    }
 
     for (int i = 0; i < numTracks; ++i) {
         double y = trackYOffset(i);
@@ -1178,6 +1645,7 @@ void TimelineView::rebuildClips()
             item->setDragContext(&snapper_, editMgr_,
                                 &pixelsPerBeat_, &trackHeight_, numTracks,
                                 [this]() { rebuildClips(); });
+            item->setTrackYOffsetFunc([this](int idx) { return trackYOffset(idx); });
             if (item->isMidiClip()) {
                 if (auto* mc = dynamic_cast<te::MidiClip*>(clip)) {
                     auto linked = editMgr_->getLinkedMidiClips(track, mc);
@@ -1368,7 +1836,7 @@ void TimelineView::handleFileDrop(const QString& path, double xPos, int yPos)
     beat = snapper_.snapBeat(beat);
     if (beat < 0) beat = 0;
 
-    auto tracks = editMgr_->getAudioTracksInDisplayOrder();
+    auto tracks = getVisibleTracks();
     if (trackIdx < 0) trackIdx = 0;
     if (trackIdx >= tracks.size()) trackIdx = tracks.size() - 1;
 
@@ -1520,7 +1988,7 @@ void TimelineView::pasteClips()
     auto& ts = editMgr_->edit()->tempoSequence;
     double playheadBeat = ts.toBeats(playheadTime).inBeats();
 
-    auto tracks = editMgr_->getAudioTracksInDisplayOrder();
+    auto tracks = getVisibleTracks();
     if (tracks.isEmpty()) return;
 
     for (auto& entry : clipboardEntries_) {
@@ -1577,7 +2045,7 @@ void TimelineView::handleEmptyAreaDoubleClick(double sceneX, double sceneY)
     beat = snapper_.snapBeat(beat);
     if (beat < 0) beat = 0;
 
-    auto tracks = editMgr_->getAudioTracksInDisplayOrder();
+    auto tracks = getVisibleTracks();
     if (trackIdx < 0 || trackIdx >= tracks.size() || tracks.isEmpty()) return;
 
     auto* track = tracks[trackIdx];
@@ -1601,7 +2069,7 @@ void TimelineView::handleBackgroundDragStarted(QPointF startScenePos)
     if (!editMgr_ || !editMgr_->edit())
         return;
 
-    auto tracks = editMgr_->getAudioTracksInDisplayOrder();
+    auto tracks = getVisibleTracks();
     if (tracks.isEmpty())
         return;
 
@@ -1636,7 +2104,7 @@ void TimelineView::handleBackgroundDragUpdated(QPointF, QPointF currentScenePos)
     if (!isMidiClipDrawActive_ || !midiClipDrawPreviewItem_ || !midiClipDrawTrack_)
         return;
 
-    auto tracks = editMgr_->getAudioTracksInDisplayOrder();
+    auto tracks = getVisibleTracks();
     int trackIdx = -1;
     for (int i = 0; i < tracks.size(); ++i) {
         if (tracks[i] == midiClipDrawTrack_) {

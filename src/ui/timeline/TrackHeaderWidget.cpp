@@ -472,6 +472,13 @@ void TrackHeaderWidget::setCollapsed(bool collapsed)
     if (freezeBtn_) freezeBtn_->setVisible(!collapsed);
 }
 
+void TrackHeaderWidget::setIndented(bool indented)
+{
+    auto* mainLay = layout();
+    if (mainLay)
+        mainLay->setContentsMargins(indented ? 15 : 5, 4, 5, 4);
+}
+
 void TrackHeaderWidget::setTrackHeight(int h)
 {
     int minH = minimumSizeHint().height();

@@ -1227,7 +1227,7 @@ QMap<QString, QPointF> EditManager::loadRoutingLayout() const
 
 // ── Track display order ──────────────────────────────────────────────────────
 
-void EditManager::saveTrackDisplayOrder(const QVector<te::EditItemID>& order)
+void EditManager::saveRawDisplayOrder(const QStringList& entries)
 {
     if (!edit_) return;
     static const juce::Identifier kOrderId("OpenDaw_TRACK_DISPLAY_ORDER");
@@ -1238,9 +1238,9 @@ void EditManager::saveTrackDisplayOrder(const QVector<te::EditItemID>& order)
         edit_->state.removeChild(existing, nullptr);
 
     juce::String idList;
-    for (int i = 0; i < order.size(); ++i) {
+    for (int i = 0; i < entries.size(); ++i) {
         if (i > 0) idList += ",";
-        idList += juce::String(order[i].getRawID());
+        idList += juce::String(entries[i].toStdString());
     }
 
     juce::ValueTree node(kOrderId);
@@ -1248,20 +1248,41 @@ void EditManager::saveTrackDisplayOrder(const QVector<te::EditItemID>& order)
     edit_->state.appendChild(node, nullptr);
 }
 
-QVector<te::EditItemID> EditManager::loadTrackDisplayOrder() const
+QStringList EditManager::loadRawDisplayOrder() const
 {
-    QVector<te::EditItemID> order;
-    if (!edit_) return order;
+    QStringList result;
+    if (!edit_) return result;
     static const juce::Identifier kOrderId("OpenDaw_TRACK_DISPLAY_ORDER");
     static const juce::Identifier kIdsId("ids");
 
     auto node = edit_->state.getChildWithName(kOrderId);
-    if (!node.isValid()) return order;
+    if (!node.isValid()) return result;
 
     auto idList = node.getProperty(kIdsId).toString();
     auto tokens = juce::StringArray::fromTokens(idList, ",", "");
     for (auto& tok : tokens) {
-        int rawId = tok.getIntValue();
+        auto trimmed = tok.trim();
+        if (trimmed.isNotEmpty())
+            result.append(QString::fromStdString(trimmed.toStdString()));
+    }
+    return result;
+}
+
+void EditManager::saveTrackDisplayOrder(const QVector<te::EditItemID>& order)
+{
+    QStringList entries;
+    for (auto& id : order)
+        entries.append(QString::number(id.getRawID()));
+    saveRawDisplayOrder(entries);
+}
+
+QVector<te::EditItemID> EditManager::loadTrackDisplayOrder() const
+{
+    QVector<te::EditItemID> order;
+    auto raw = loadRawDisplayOrder();
+    for (auto& entry : raw) {
+        if (entry.startsWith("f")) continue;
+        int rawId = entry.toInt();
         if (rawId > 0)
             order.append(te::EditItemID::fromRawID(rawId));
     }
@@ -1280,7 +1301,7 @@ juce::Array<te::AudioTrack*> EditManager::getAudioTracksInDisplayOrder()
 
     for (auto& id : displayOrder) {
         for (auto* track : allTracks) {
-            if (track->itemID == id) {
+            if (track->itemID == id && !result.contains(track)) {
                 result.add(track);
                 break;
             }
@@ -1293,6 +1314,237 @@ juce::Array<te::AudioTrack*> EditManager::getAudioTracksInDisplayOrder()
     }
 
     return result;
+}
+
+// ── Track folders ────────────────────────────────────────────────────────────
+
+static const juce::Identifier kFoldersId("OpenDaw_FOLDERS");
+static const juce::Identifier kFolderNode("FOLDER");
+static const juce::Identifier kFolderIdProp("folderId");
+static const juce::Identifier kFolderNameProp("folderName");
+static const juce::Identifier kFolderCollapsedProp("folderCollapsed");
+static const juce::Identifier kNextFolderIdProp("nextFolderId");
+static const juce::Identifier kTrackFolderProp("OpenDaw_folderId");
+
+int EditManager::addFolder(const QString& name, te::AudioTrack* insertBefore)
+{
+    if (!edit_) return 0;
+    auto foldersNode = edit_->state.getOrCreateChildWithName(kFoldersId, nullptr);
+    int nextId = foldersNode.getProperty(kNextFolderIdProp, 1);
+    foldersNode.setProperty(kNextFolderIdProp, nextId + 1, &edit_->getUndoManager());
+
+    juce::ValueTree folder(kFolderNode);
+    folder.setProperty(kFolderIdProp, nextId, nullptr);
+    folder.setProperty(kFolderNameProp, juce::String(name.toStdString()), nullptr);
+    folder.setProperty(kFolderCollapsedProp, false, nullptr);
+    foldersNode.appendChild(folder, &edit_->getUndoManager());
+
+    auto raw = loadRawDisplayOrder();
+
+    // If no display order exists yet, initialize it from current track order
+    if (raw.isEmpty()) {
+        for (auto* t : getAudioTracks())
+            raw.append(QString::number(t->itemID.getRawID()));
+    }
+
+    QString folderEntry = QString("f%1").arg(nextId);
+
+    if (insertBefore) {
+        QString trackId = QString::number(insertBefore->itemID.getRawID());
+        int idx = raw.indexOf(trackId);
+        if (idx >= 0)
+            raw.insert(idx, folderEntry);
+        else
+            raw.append(folderEntry);
+    } else {
+        raw.append(folderEntry);
+    }
+    saveRawDisplayOrder(raw);
+
+    QTimer::singleShot(0, this, [this]() { emit tracksChanged(); });
+    return nextId;
+}
+
+void EditManager::removeFolder(int folderId)
+{
+    if (!edit_ || folderId <= 0) return;
+    auto foldersNode = edit_->state.getChildWithName(kFoldersId);
+    if (!foldersNode.isValid()) return;
+
+    for (int i = 0; i < foldersNode.getNumChildren(); ++i) {
+        auto child = foldersNode.getChild(i);
+        if (int(child.getProperty(kFolderIdProp)) == folderId) {
+            foldersNode.removeChild(child, &edit_->getUndoManager());
+            break;
+        }
+    }
+
+    for (auto* track : getAudioTracks()) {
+        if (getTrackFolderId(track) == folderId)
+            moveTrackToFolder(track, 0);
+    }
+
+    auto raw = loadRawDisplayOrder();
+    raw.removeAll(QString("f%1").arg(folderId));
+    saveRawDisplayOrder(raw);
+
+    QTimer::singleShot(0, this, [this]() { emit tracksChanged(); });
+}
+
+void EditManager::renameFolder(int folderId, const QString& name)
+{
+    if (!edit_ || folderId <= 0) return;
+    auto foldersNode = edit_->state.getChildWithName(kFoldersId);
+    if (!foldersNode.isValid()) return;
+
+    for (int i = 0; i < foldersNode.getNumChildren(); ++i) {
+        auto child = foldersNode.getChild(i);
+        if (int(child.getProperty(kFolderIdProp)) == folderId) {
+            child.setProperty(kFolderNameProp,
+                              juce::String(name.toStdString()),
+                              &edit_->getUndoManager());
+            emit tracksChanged();
+            return;
+        }
+    }
+}
+
+void EditManager::setFolderCollapsed(int folderId, bool collapsed)
+{
+    if (!edit_ || folderId <= 0) return;
+    auto foldersNode = edit_->state.getChildWithName(kFoldersId);
+    if (!foldersNode.isValid()) return;
+
+    for (int i = 0; i < foldersNode.getNumChildren(); ++i) {
+        auto child = foldersNode.getChild(i);
+        if (int(child.getProperty(kFolderIdProp)) == folderId) {
+            child.setProperty(kFolderCollapsedProp, collapsed,
+                              &edit_->getUndoManager());
+            return;
+        }
+    }
+}
+
+bool EditManager::isFolderCollapsed(int folderId) const
+{
+    if (!edit_ || folderId <= 0) return false;
+    auto foldersNode = edit_->state.getChildWithName(kFoldersId);
+    if (!foldersNode.isValid()) return false;
+
+    for (int i = 0; i < foldersNode.getNumChildren(); ++i) {
+        auto child = foldersNode.getChild(i);
+        if (int(child.getProperty(kFolderIdProp)) == folderId)
+            return child.getProperty(kFolderCollapsedProp);
+    }
+    return false;
+}
+
+QString EditManager::getFolderName(int folderId) const
+{
+    if (!edit_ || folderId <= 0) return {};
+    auto foldersNode = edit_->state.getChildWithName(kFoldersId);
+    if (!foldersNode.isValid()) return {};
+
+    for (int i = 0; i < foldersNode.getNumChildren(); ++i) {
+        auto child = foldersNode.getChild(i);
+        if (int(child.getProperty(kFolderIdProp)) == folderId)
+            return QString::fromStdString(
+                child.getProperty(kFolderNameProp).toString().toStdString());
+    }
+    return {};
+}
+
+void EditManager::moveTrackToFolder(te::AudioTrack* track, int folderId)
+{
+    if (!track || !edit_) return;
+    track->state.setProperty(kTrackFolderProp, folderId,
+                             &edit_->getUndoManager());
+}
+
+int EditManager::getTrackFolderId(te::AudioTrack* track) const
+{
+    if (!track) return 0;
+    return track->state.getProperty(kTrackFolderProp, 0);
+}
+
+QVector<EditManager::FolderInfo> EditManager::getFolders() const
+{
+    QVector<FolderInfo> result;
+    if (!edit_) return result;
+    auto foldersNode = edit_->state.getChildWithName(kFoldersId);
+    if (!foldersNode.isValid()) return result;
+
+    for (int i = 0; i < foldersNode.getNumChildren(); ++i) {
+        auto child = foldersNode.getChild(i);
+        if (!child.hasType(kFolderNode)) continue;
+        FolderInfo info;
+        info.id = child.getProperty(kFolderIdProp);
+        info.name = QString::fromStdString(
+            child.getProperty(kFolderNameProp).toString().toStdString());
+        info.collapsed = child.getProperty(kFolderCollapsedProp);
+        result.append(info);
+    }
+    return result;
+}
+
+QVector<EditManager::DisplayItem> EditManager::getDisplayItems()
+{
+    QVector<DisplayItem> result;
+    if (!edit_) return result;
+
+    auto allTracks = getAudioTracks();
+    auto raw = loadRawDisplayOrder();
+    QSet<uint64_t> addedTrackIds;
+
+    for (auto& entry : raw) {
+        if (entry.startsWith("f")) {
+            int fid = entry.mid(1).toInt();
+            if (fid > 0 && !getFolderName(fid).isEmpty()) {
+                DisplayItem item;
+                item.type = DisplayItem::Folder;
+                item.folderId = fid;
+                result.append(item);
+            }
+        } else {
+            uint64_t rawId = entry.toULongLong();
+            if (rawId == 0) continue;
+            for (auto* track : allTracks) {
+                if (track->itemID.getRawID() == rawId) {
+                    DisplayItem item;
+                    item.type = DisplayItem::Track;
+                    item.track = track;
+                    item.parentFolderId = getTrackFolderId(track);
+                    result.append(item);
+                    addedTrackIds.insert(rawId);
+                    break;
+                }
+            }
+        }
+    }
+
+    for (auto* track : allTracks) {
+        if (!addedTrackIds.contains(track->itemID.getRawID())) {
+            DisplayItem item;
+            item.type = DisplayItem::Track;
+            item.track = track;
+            item.parentFolderId = getTrackFolderId(track);
+            result.append(item);
+        }
+    }
+
+    return result;
+}
+
+void EditManager::saveDisplayItems(const QVector<DisplayItem>& items)
+{
+    QStringList entries;
+    for (auto& item : items) {
+        if (item.type == DisplayItem::Folder)
+            entries.append(QString("f%1").arg(item.folderId));
+        else if (item.track)
+            entries.append(QString::number(item.track->itemID.getRawID()));
+    }
+    saveRawDisplayOrder(entries);
 }
 
 // ── Automation parameter access ───────────────────────────────────────────────

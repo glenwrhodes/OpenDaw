@@ -4,6 +4,7 @@
 #include "GridSnapper.h"
 #include "ClipItem.h"
 #include "TrackHeaderWidget.h"
+#include "FolderHeaderWidget.h"
 #include "AutomationLaneItem.h"
 #include "AutomationLaneHeader.h"
 #include "MarkerTempoLane.h"
@@ -156,6 +157,7 @@ private:
     std::vector<QGraphicsLineItem*> gridLineItems_;
     std::vector<QGraphicsLineItem*> trackSeparatorItems_;
     std::vector<TrackHeaderWidget*> trackHeaders_;
+    std::vector<FolderHeaderWidget*> folderHeaders_;
     QGraphicsRectItem* midiClipDrawPreviewItem_ = nullptr;
     te::AudioTrack* midiClipDrawTrack_ = nullptr;
     double midiClipDrawStartBeat_ = 0.0;
@@ -193,14 +195,43 @@ private:
     // Track transport state for automation refresh
     bool wasPlaying_ = false;
 
-    // Live track reorder state
+    // Folder divider positions in the scene
+    struct FolderDividerInfo {
+        int folderId = 0;
+        double yOffset = 0.0;
+        static constexpr double kHeight = 28.0;
+    };
+    std::vector<FolderDividerInfo> folderDividers_;
+
+    // Ordered list of all headers (folders + tracks) for drag reorder
+    struct OrderedHeader {
+        bool isFolder = false;
+        int folderId = 0;
+        te::AudioTrack* track = nullptr;
+        QWidget* widget = nullptr;
+    };
+    std::vector<OrderedHeader> orderedHeaders_;
+
+    juce::Array<te::AudioTrack*> getVisibleTracks() const;
+
+    bool insideTracksChanged_ = false;
+
+    // Live track/folder reorder state
     int reorderDragSourceIndex_ = -1;
     int reorderCurrentIndex_ = -1;
+    int reorderGroupSize_ = 1;
     QLabel* reorderGhost_ = nullptr;
+    int reorderLastGlobalY_ = 0;
+    bool reorderDroppedOnFolder_ = false;
+    int reorderDropFolderId_ = 0;
 
     void onTrackDragStarted(TrackHeaderWidget* header);
     void onTrackDragMoved(TrackHeaderWidget* header, int globalY);
     void onTrackDragFinished(TrackHeaderWidget* header);
+    void onFolderDragStarted(FolderHeaderWidget* header);
+    void onFolderDragMoved(FolderHeaderWidget* header, int globalY);
+    void onFolderDragFinished(FolderHeaderWidget* header);
+    void commitReorder();
 
     // Lane resize
     bool laneResizing_ = false;

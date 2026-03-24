@@ -35,6 +35,7 @@ public:
                         double* pixelsPerBeatPtr, double* trackHeightPtr,
                         int trackCount,
                         std::function<void()> requestRefresh);
+    void setTrackYOffsetFunc(std::function<double(int)> func) { trackYOffsetFunc_ = std::move(func); }
     void setLinkedChannelCount(int count) { linkedChannelCount_ = count; }
     int linkedChannelCount() const { return linkedChannelCount_; }
     void updateGeometry(double pixelsPerBeat, double trackHeight, double scrollY);
@@ -98,6 +99,7 @@ private:
     double* trackHeightPtr_ = nullptr;
     int     trackCount_ = 1;
     std::function<void()> requestRefresh_;
+    std::function<double(int)> trackYOffsetFunc_;
 };
 
 } // namespace OpenDaw
