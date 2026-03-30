@@ -6,6 +6,7 @@
 #include "ui/sheetmusic/SheetMusicView.h"
 #include "ui/dialogs/ExportDialog.h"
 #include "ui/dialogs/AudioSettingsDialog.h"
+#include "ui/video/VideoPlayerWidget.h"
 #include "ui/SplashScreen.h"
 #include "utils/ThemeManager.h"
 #include "utils/IconFont.h"
@@ -123,6 +124,23 @@ MainWindow::MainWindow(OpenDawApplication& app, QWidget* parent)
     resizeDocks({mixerDock_}, {350}, Qt::Vertical);
 
     connect(&editMgr_, &EditManager::editChanged, this, &MainWindow::updateWindowTitle);
+    connect(&editMgr_, &EditManager::editChanged, this, [this]() {
+        auto* edit = editMgr_.edit();
+        if (!edit) return;
+        juce::File vf = edit->getVideoFile();
+        QString vpath = vf.existsAsFile()
+            ? QString::fromStdString(vf.getFullPathName().toStdString())
+            : QString();
+
+        if (timelineView_ && timelineView_->videoLane()) {
+            auto* lane = timelineView_->videoLane();
+            if (!vpath.isEmpty() && lane->videoFilePath() != vpath)
+                lane->loadVideo(vpath);
+        }
+
+        if (videoPlayer_)
+            videoPlayer_->setVideoFile(vpath);
+    });
     updateWindowTitle();
 
     aiQuickPrompt_ = new AiQuickPrompt(this);
@@ -326,6 +344,29 @@ void MainWindow::createMenus()
         &MainWindow::onExportAudio);
 
     fileMenu->addSeparator();
+    fileMenu->addAction("Import &Video...", this, [this]() {
+        QString path = QFileDialog::getOpenFileName(
+            this, "Import Video", {},
+            "Video Files (*.mp4 *.mkv *.avi *.mov *.webm *.wmv);;All Files (*)");
+        if (path.isEmpty()) return;
+
+        if (timelineView_ && timelineView_->videoLane()) {
+            if (timelineView_->videoLane()->loadVideo(path)) {
+                if (!timelineView_->videoLane()->isVisible())
+                    timelineView_->toggleVideoLane();
+            }
+        }
+
+        if (videoPlayer_) {
+            videoPlayer_->setVideoFile(path);
+            if (videoPlayerDock_ && !videoPlayerDock_->isVisible()) {
+                videoPlayerDock_->setVisible(true);
+                videoPlayerDock_->raise();
+            }
+        }
+    });
+
+    fileMenu->addSeparator();
     fileMenu->addAction("&Quit", QKeySequence::Quit, this, &QMainWindow::close);
 
     // Edit menu
@@ -411,6 +452,15 @@ void MainWindow::createMenus()
     });
     viewMenu->addAction("Toggle Marker/&Tempo Lane", this, [this]() {
         if (timelineView_) timelineView_->toggleMarkerTempoLane();
+    });
+    viewMenu->addAction("Toggle &Video Track", this, [this]() {
+        if (timelineView_) timelineView_->toggleVideoLane();
+    });
+    viewMenu->addAction("Toggle Video &Player", this, [this]() {
+        if (videoPlayerDock_) {
+            videoPlayerDock_->setVisible(!videoPlayerDock_->isVisible());
+            if (videoPlayerDock_->isVisible()) videoPlayerDock_->raise();
+        }
     });
     viewMenu->addAction("Toggle &AI Assistant", this, [this]() {
         aiDock_->setVisible(!aiDock_->isVisible());
@@ -832,10 +882,19 @@ void MainWindow::createDocks()
             });
     qDebug() << "[MainWindow] sheet music dock done";
 
+    // Video Player dock (bottom, tabbed with others)
+    videoPlayerDock_ = new QDockWidget("Video", this);
+    videoPlayerDock_->setAccessibleName("Video Player Dock");
+    videoPlayer_ = new VideoPlayerWidget(&editMgr_, videoPlayerDock_);
+    videoPlayerDock_->setWidget(videoPlayer_);
+    addDockWidget(Qt::BottomDockWidgetArea, videoPlayerDock_);
+    qDebug() << "[MainWindow] video player dock done";
+
     tabifyDockWidget(mixerDock_, pianoRollDock_);
     tabifyDockWidget(pianoRollDock_, audioClipDock_);
     tabifyDockWidget(audioClipDock_, routingDock_);
     tabifyDockWidget(routingDock_, sheetMusicDock_);
+    tabifyDockWidget(sheetMusicDock_, videoPlayerDock_);
     mixerDock_->raise();
 
     connect(&editMgr_, &EditManager::midiClipDoubleClicked,

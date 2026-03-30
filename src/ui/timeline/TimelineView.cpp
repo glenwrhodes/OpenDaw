@@ -281,6 +281,36 @@ TimelineView::TimelineView(EditManager* editMgr, QWidget* parent)
     markerTempoRow_->setVisible(false);
     outerLayout->addWidget(markerTempoRow_);
 
+    // ── Video track lane (toggleable) ──
+    videoRow_ = new QWidget(this);
+    auto* vtLayout = new QHBoxLayout(videoRow_);
+    vtLayout->setContentsMargins(0, 0, 0, 0);
+    vtLayout->setSpacing(0);
+
+    auto* vtLabel = new QWidget(videoRow_);
+    vtLabel->setFixedSize(HEADER_WIDTH, 100);
+    vtLabel->setAutoFillBackground(true);
+    QPalette vtPal;
+    vtPal.setColor(QPalette::Window, theme.surface);
+    vtLabel->setPalette(vtPal);
+
+    auto* vtLabelLayout = new QVBoxLayout(vtLabel);
+    vtLabelLayout->setContentsMargins(8, 4, 4, 4);
+    auto* vtTitle = new QLabel("Video", vtLabel);
+    vtTitle->setAccessibleName("Video Track Label");
+    vtTitle->setStyleSheet(QString("color: %1; font-size: 11px; font-weight: bold;")
+        .arg(theme.text.name()));
+    vtLabelLayout->addWidget(vtTitle);
+    vtLabelLayout->addStretch();
+
+    vtLayout->addWidget(vtLabel);
+
+    videoLane_ = new VideoTrackLane(editMgr_, videoRow_);
+    vtLayout->addWidget(videoLane_, 1);
+
+    videoRow_->setVisible(false);
+    outerLayout->addWidget(videoRow_);
+
     // ── Body row: track headers (left) + graphics view (right) ──
     auto* bodyRow = new QWidget(this);
     bodyLayout_ = new QHBoxLayout(bodyRow);
@@ -352,6 +382,7 @@ TimelineView::TimelineView(EditManager* editMgr, QWidget* parent)
             this, [this](int val) {
                 ruler_->setScrollX(val);
                 if (markerTempoLane_) markerTempoLane_->setScrollX(val);
+                if (videoLane_) videoLane_->setScrollX(val);
                 QRectF sr = scene_->sceneRect();
                 double viewRight = val + graphicsView_->viewport()->width();
                 if (viewRight > sr.width() - 200.0) {
@@ -583,6 +614,7 @@ void TimelineView::setPixelsPerBeat(double ppb)
     pixelsPerBeat_ = std::clamp(ppb, 5.0, 200.0);
     ruler_->setPixelsPerBeat(pixelsPerBeat_);
     if (markerTempoLane_) markerTempoLane_->setPixelsPerBeat(pixelsPerBeat_);
+    if (videoLane_) videoLane_->setPixelsPerBeat(pixelsPerBeat_);
     rebuildClips();
 }
 
@@ -741,6 +773,10 @@ void TimelineView::onEditChanged()
     for (auto* header : trackHeaders_)
         header->refresh();
     syncLoopStateFromTransport();
+    if (videoLane_ && videoLane_->hasVideo()) {
+        videoLane_->refresh();
+        videoLane_->forceRebuildFilmstrip();
+    }
     qDebug() << "[TimelineView] onEditChanged done";
 }
 
@@ -955,6 +991,13 @@ void TimelineView::toggleMarkerTempoLane()
 {
     if (markerTempoRow_) {
         markerTempoRow_->setVisible(!markerTempoRow_->isVisible());
+    }
+}
+
+void TimelineView::toggleVideoLane()
+{
+    if (videoRow_) {
+        videoRow_->setVisible(!videoRow_->isVisible());
     }
 }
 
@@ -1727,6 +1770,11 @@ void TimelineView::updatePlayhead()
     if (markerTempoLane_ && markerTempoLane_->isVisible()) {
         double playBeat = ts.toBeats(editMgr_->transport().getPosition()).inBeats();
         markerTempoLane_->setPlayheadBeat(playBeat);
+    }
+
+    if (videoLane_ && videoLane_->isVisible()) {
+        double playBeat = ts.toBeats(editMgr_->transport().getPosition()).inBeats();
+        videoLane_->setPlayheadBeat(playBeat);
     }
 
     if (isPlaying) {

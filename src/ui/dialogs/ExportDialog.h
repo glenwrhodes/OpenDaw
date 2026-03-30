@@ -35,6 +35,8 @@ private:
     QLabel* bitDepthLabel_ = nullptr;
     QComboBox* oggQualityCombo_ = nullptr;
     QLabel* oggQualityLabel_ = nullptr;
+    QComboBox* mp3BitrateCombo_ = nullptr;
+    QLabel* mp3BitrateLabel_ = nullptr;
     QCheckBox* normalizeCheck_ = nullptr;
     QPushButton* exportBtn_ = nullptr;
     QPushButton* cancelBtn_ = nullptr;

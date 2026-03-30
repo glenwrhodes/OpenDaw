@@ -45,6 +45,19 @@ set(CMAKE_PREFIX_PATH "c:/qt/6.10.2/msvc2022_64" CACHE STRING "Qt prefix path")
 find_package(Qt6 REQUIRED COMPONENTS Widgets Network Concurrent PrintSupport)
 qt_standard_project_setup()
 
+# ── FFmpeg ────────────────────────────────────────────────────────────────────
+# On Windows: vcpkg provides FindFFMPEG.cmake via toolchain file.
+# On Linux/macOS: system packages provide pkg-config .pc files.
+if(WIN32)
+    find_package(FFMPEG REQUIRED)
+    set(FFMPEG_LINK_TARGET ${FFMPEG_LIBRARIES})
+else()
+    find_package(PkgConfig REQUIRED)
+    pkg_check_modules(FFMPEG REQUIRED IMPORTED_TARGET
+        libavformat libavcodec libavutil libswscale libswresample)
+    set(FFMPEG_LINK_TARGET PkgConfig::FFMPEG)
+endif()
+
 # ── JUCE ─────────────────────────────────────────────────────────────────────
 set(JUCE_MODULES_ONLY OFF CACHE BOOL "" FORCE)
 add_subdirectory(libs/JUCE)
@@ -121,6 +134,10 @@ set(OpenDaw_SOURCES
     src/ai/AiChatStore.h           src/ai/AiChatStore.cpp
     src/ai/AiChatWidget.h          src/ai/AiChatWidget.cpp
     src/ai/AiQuickPrompt.h         src/ai/AiQuickPrompt.cpp
+    src/utils/FFmpegUtils.h        src/utils/FFmpegUtils.cpp
+    src/video/VideoThumbnailCache.h src/video/VideoThumbnailCache.cpp
+    src/ui/timeline/VideoTrackLane.h src/ui/timeline/VideoTrackLane.cpp
+    src/ui/video/VideoPlayerWidget.h src/ui/video/VideoPlayerWidget.cpp
 )
 
 # ── Create the OpenDaw JUCE GUI App target ───────────────────────────────────
@@ -154,7 +171,8 @@ qt_add_resources(OpenDaw "OpenDaw_resources" PREFIX "/" BASE resources FILES
     resources/MaterialSymbolsOutlined.ttf
     resources/mixerStripBG.png
     resources/Bravura.otf)
-target_include_directories(OpenDaw PRIVATE src ${CMAKE_SOURCE_DIR}/libs/vst2sdk)
+target_include_directories(OpenDaw PRIVATE src ${CMAKE_SOURCE_DIR}/libs/vst2sdk ${FFMPEG_INCLUDE_DIRS})
+target_link_directories(OpenDaw PRIVATE ${FFMPEG_LIBRARY_DIRS})
 
 target_compile_definitions(OpenDaw PRIVATE
     JUCE_PLUGINHOST_VST=1
@@ -182,7 +200,8 @@ target_link_libraries(OpenDaw PRIVATE
     juce::juce_audio_utils
     juce::juce_core
     juce::juce_events
-    juce::juce_recommended_warning_flags)
+    juce::juce_recommended_warning_flags
+    ${FFMPEG_LINK_TARGET})
 
 if(CMAKE_CXX_COMPILER_ID MATCHES "GNU")
     target_compile_options(OpenDaw PRIVATE -Wno-unknown-pragmas)

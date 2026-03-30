@@ -1,4 +1,5 @@
 #include "EditManager.h"
+#include "utils/FFmpegUtils.h"
 #include <juce_audio_formats/juce_audio_formats.h>
 #include <tracktion_engine/tracktion_engine.h>
 #include <QDebug>
@@ -1707,37 +1708,68 @@ bool EditManager::exportMix(const ExportSettings& settings,
     params.useMasterPlugins = true;
     params.canRenderInMono = false;
 
+    bool isMp3 = (settings.format == ExportFormat::MP3);
+    juce::File renderDest = isMp3
+        ? settings.destFile.getSiblingFile(settings.destFile.getFileNameWithoutExtension() + "_tmp.wav")
+        : settings.destFile;
+
+    te::Renderer::Parameters renderParams(params);
+    renderParams.destFile = renderDest;
+
     std::unique_ptr<juce::AudioFormat> audioFormat;
     switch (settings.format) {
         case ExportFormat::FLAC: audioFormat = std::make_unique<juce::FlacAudioFormat>(); break;
         case ExportFormat::OGG:  audioFormat = std::make_unique<juce::OggVorbisAudioFormat>(); break;
         default:                 audioFormat = std::make_unique<juce::WavAudioFormat>(); break;
     }
-    params.audioFormat = audioFormat.get();
+    renderParams.audioFormat = audioFormat.get();
     if (settings.format == ExportFormat::OGG)
-        params.bitDepth = settings.oggQuality;
+        renderParams.bitDepth = settings.oggQuality;
 
     std::atomic<float> progress{0.0f};
     auto task = std::make_unique<te::Renderer::RenderTask>(
-        "Exporting mix", params, &progress, nullptr);
+        "Exporting mix", renderParams, &progress, nullptr);
 
     while (true) {
         auto status = task->runJob();
         float p = progress.load();
-        if (progressCallback)
-            progressCallback(p);
+        if (progressCallback) {
+            float scaledProgress = isMp3 ? p * 0.8f : p;
+            progressCallback(scaledProgress);
+        }
         if (status == juce::ThreadPoolJob::jobHasFinished)
             break;
     }
 
-    renderInProgress_ = false;
-
     if (!task->errorMessage.isEmpty()) {
         qWarning() << "[exportMix] render error:"
                     << QString::fromStdString(task->errorMessage.toStdString());
+        renderInProgress_ = false;
+        if (isMp3) renderDest.deleteFile();
         return false;
     }
 
+    if (isMp3) {
+        QString wavPath = QString::fromStdString(renderDest.getFullPathName().toStdString());
+        QString mp3Path = QString::fromStdString(settings.destFile.getFullPathName().toStdString());
+
+        bool mp3ok = transcodeToMp3(wavPath, mp3Path, settings.mp3Bitrate,
+            [&](float tp) {
+                if (progressCallback)
+                    progressCallback(0.8f + tp * 0.2f);
+            });
+
+        renderDest.deleteFile();
+        renderInProgress_ = false;
+
+        if (!mp3ok) {
+            qWarning() << "[exportMix] MP3 transcode failed";
+            return false;
+        }
+        return settings.destFile.existsAsFile();
+    }
+
+    renderInProgress_ = false;
     return settings.destFile.existsAsFile();
 }
 

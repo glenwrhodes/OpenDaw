@@ -38,6 +38,7 @@ ExportDialog::ExportDialog(QWidget* parent)
     formatCombo_->addItem("WAV (Uncompressed)", static_cast<int>(ExportFormat::WAV));
     formatCombo_->addItem("FLAC (Lossless)", static_cast<int>(ExportFormat::FLAC));
     formatCombo_->addItem("OGG Vorbis (Lossy)", static_cast<int>(ExportFormat::OGG));
+    formatCombo_->addItem("MP3 (Lossy)", static_cast<int>(ExportFormat::MP3));
     form->addRow("Format:", formatCombo_);
 
     auto* pathRow = new QHBoxLayout();
@@ -87,6 +88,18 @@ ExportDialog::ExportDialog(QWidget* parent)
     form->addRow(oggQualityLabel_, oggQualityCombo_);
     oggQualityLabel_->setVisible(false);
     oggQualityCombo_->setVisible(false);
+
+    mp3BitrateLabel_ = new QLabel("Bitrate:", this);
+    mp3BitrateCombo_ = new QComboBox(this);
+    mp3BitrateCombo_->setAccessibleName("MP3 Bitrate");
+    mp3BitrateCombo_->addItem("128 kbps", 128);
+    mp3BitrateCombo_->addItem("192 kbps", 192);
+    mp3BitrateCombo_->addItem("256 kbps", 256);
+    mp3BitrateCombo_->addItem("320 kbps", 320);
+    mp3BitrateCombo_->setCurrentIndex(3);
+    form->addRow(mp3BitrateLabel_, mp3BitrateCombo_);
+    mp3BitrateLabel_->setVisible(false);
+    mp3BitrateCombo_->setVisible(false);
 
     normalizeCheck_ = new QCheckBox("Normalize output", this);
     normalizeCheck_->setAccessibleName("Normalize Output");
@@ -148,6 +161,8 @@ ExportDialog::ExportDialog(QWidget* parent)
     if (bdIdx >= 0) bitDepthCombo_->setCurrentIndex(bdIdx);
     int oqIdx = oggQualityCombo_->findData(qs.value("export/oggQuality", 5));
     if (oqIdx >= 0) oggQualityCombo_->setCurrentIndex(oqIdx);
+    int mbIdx = mp3BitrateCombo_->findData(qs.value("export/mp3Bitrate", 320));
+    if (mbIdx >= 0) mp3BitrateCombo_->setCurrentIndex(mbIdx);
     normalizeCheck_->setChecked(qs.value("export/normalize", false).toBool());
 
     onFormatChanged(formatCombo_->currentIndex());
@@ -157,12 +172,15 @@ void ExportDialog::onFormatChanged(int)
 {
     auto fmt = static_cast<ExportFormat>(formatCombo_->currentData().toInt());
     bool isOgg = (fmt == ExportFormat::OGG);
+    bool isMp3 = (fmt == ExportFormat::MP3);
     bool isFlac = (fmt == ExportFormat::FLAC);
 
-    bitDepthLabel_->setVisible(!isOgg);
-    bitDepthCombo_->setVisible(!isOgg);
+    bitDepthLabel_->setVisible(!isOgg && !isMp3);
+    bitDepthCombo_->setVisible(!isOgg && !isMp3);
     oggQualityLabel_->setVisible(isOgg);
     oggQualityCombo_->setVisible(isOgg);
+    mp3BitrateLabel_->setVisible(isMp3);
+    mp3BitrateCombo_->setVisible(isMp3);
 
     if (isFlac) {
         int prevBitDepth = bitDepthCombo_->currentData().toInt();
@@ -171,7 +189,7 @@ void ExportDialog::onFormatChanged(int)
         bitDepthCombo_->addItem("24-bit", 24);
         int idx = bitDepthCombo_->findData(prevBitDepth);
         bitDepthCombo_->setCurrentIndex(idx >= 0 ? idx : 1);
-    } else if (!isOgg) {
+    } else if (!isOgg && !isMp3) {
         int prevBitDepth = bitDepthCombo_->currentData().toInt();
         bitDepthCombo_->clear();
         bitDepthCombo_->addItem("16-bit", 16);
@@ -194,10 +212,11 @@ void ExportDialog::updatePathExtension()
     switch (fmt) {
         case ExportFormat::FLAC: newExt = ".flac"; break;
         case ExportFormat::OGG:  newExt = ".ogg"; break;
+        case ExportFormat::MP3:  newExt = ".mp3"; break;
         default:                 newExt = ".wav"; break;
     }
 
-    QStringList exts = {".wav", ".flac", ".ogg"};
+    QStringList exts = {".wav", ".flac", ".ogg", ".mp3"};
     for (const auto& ext : exts) {
         if (path.endsWith(ext, Qt::CaseInsensitive)) {
             path = path.left(path.length() - ext.length()) + newExt;
@@ -216,6 +235,7 @@ ExportSettings ExportDialog::settings() const
     s.bitDepth = bitDepthCombo_->currentData().toInt();
     s.normalize = normalizeCheck_->isChecked();
     s.oggQuality = oggQualityCombo_->currentData().toInt();
+    s.mp3Bitrate = mp3BitrateCombo_->currentData().toInt();
 
     QSettings qs;
     qs.setValue("export/format", static_cast<int>(s.format));
@@ -223,6 +243,7 @@ ExportSettings ExportDialog::settings() const
     qs.setValue("export/bitDepth", s.bitDepth);
     qs.setValue("export/normalize", s.normalize);
     qs.setValue("export/oggQuality", s.oggQuality);
+    qs.setValue("export/mp3Bitrate", s.mp3Bitrate);
 
     return s;
 }
@@ -235,6 +256,7 @@ void ExportDialog::setExporting(bool exporting)
     sampleRateCombo_->setEnabled(!exporting);
     bitDepthCombo_->setEnabled(!exporting);
     oggQualityCombo_->setEnabled(!exporting);
+    mp3BitrateCombo_->setEnabled(!exporting);
     normalizeCheck_->setEnabled(!exporting);
     progressBar_->setVisible(exporting);
     statusLabel_->setVisible(exporting);
@@ -275,6 +297,10 @@ void ExportDialog::onBrowse()
             filter = "OGG Vorbis Audio (*.ogg)";
             defaultName = "/mix.ogg";
             break;
+        case ExportFormat::MP3:
+            filter = "MP3 Audio (*.mp3)";
+            defaultName = "/mix.mp3";
+            break;
         default:
             filter = "WAV Audio (*.wav)";
             defaultName = "/mix.wav";
@@ -289,6 +315,7 @@ void ExportDialog::onBrowse()
     switch (fmt) {
         case ExportFormat::FLAC: ext = ".flac"; break;
         case ExportFormat::OGG:  ext = ".ogg"; break;
+        case ExportFormat::MP3:  ext = ".mp3"; break;
         default:                 ext = ".wav"; break;
     }
     if (!path.endsWith(ext, Qt::CaseInsensitive))

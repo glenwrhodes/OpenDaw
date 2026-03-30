@@ -38,6 +38,13 @@ jobs:
         with:
           arch: x64
 
+      - name: Install FFmpeg via vcpkg
+        shell: pwsh
+        run: |
+          git clone --depth 1 https://github.com/microsoft/vcpkg.git C:\vcpkg
+          C:\vcpkg\bootstrap-vcpkg.bat
+          C:\vcpkg\vcpkg install ffmpeg[core,avformat,avcodec,swscale,swresample,mp3lame]:x64-windows
+
       - name: Extract version from tag
         id: version
         shell: bash
@@ -48,6 +55,7 @@ jobs:
           cmake -B build -G Ninja
           -DCMAKE_BUILD_TYPE=Release
           -DCMAKE_PREFIX_PATH="${{ env.QT_ROOT_DIR }}"
+          -DCMAKE_TOOLCHAIN_FILE=C:/vcpkg/scripts/buildsystems/vcpkg.cmake
           -DCMAKE_C_COMPILER=cl
           -DCMAKE_CXX_COMPILER=cl
 
@@ -59,6 +67,15 @@ jobs:
         run: |
           $exe = "build/OpenDaw_artefacts/Release/OpenDaw.exe"
           windeployqt --release --no-translations --no-opengl-sw $exe
+
+      - name: Bundle FFmpeg DLLs
+        shell: pwsh
+        run: |
+          $dest = "build/OpenDaw_artefacts/Release"
+          $vcpkgBin = "C:/vcpkg/installed/x64-windows/bin"
+          Get-ChildItem "$vcpkgBin" -Filter "*.dll" | ForEach-Object {
+            Copy-Item $_.FullName $dest -Force
+          }
 
       - name: Package portable ZIP
         shell: pwsh
@@ -119,6 +136,9 @@ jobs:
           arch: 'clang_64'
           cache: true
 
+      - name: Install FFmpeg
+        run: brew install ffmpeg pkg-config
+
       - name: Extract version from tag
         id: version
         run: echo "VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
@@ -131,6 +151,22 @@ jobs:
 
       - name: Build
         run: cmake --build build --config Release
+
+      - name: Bundle FFmpeg dylibs
+        run: |
+          APP="build/OpenDaw_artefacts/Release/OpenDaw.app"
+          FRAMEWORKS="$APP/Contents/Frameworks"
+          mkdir -p "$FRAMEWORKS"
+          for lib in avformat avcodec avutil swscale swresample; do
+            DYLIB=$(brew --prefix ffmpeg)/lib/lib${lib}.dylib
+            if [ -f "$DYLIB" ]; then
+              REAL=$(readlink -f "$DYLIB")
+              cp "$REAL" "$FRAMEWORKS/"
+              BASENAME=$(basename "$REAL")
+              install_name_tool -id "@rpath/$BASENAME" "$FRAMEWORKS/$BASENAME"
+              install_name_tool -change "$REAL" "@rpath/$BASENAME" "$APP/Contents/MacOS/OpenDaw" 2>/dev/null || true
+            fi
+          done
 
       - name: Deploy Qt into app bundle
         run: |
@@ -234,6 +270,8 @@ jobs:
             libwebkit2gtk-4.0-dev libgtk-3-dev \
             libglu1-mesa-dev mesa-common-dev \
             libcups2-dev libssl-dev libxkbcommon-dev \
+            libavformat-dev libavcodec-dev libavutil-dev \
+            libswscale-dev libswresample-dev \
             ninja-build libfuse2
 
       - name: Install Qt

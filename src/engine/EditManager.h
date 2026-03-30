@@ -20,7 +20,7 @@ struct InputSource {
     QString displayName;
 };
 
-enum class ExportFormat { WAV, FLAC, OGG };
+enum class ExportFormat { WAV, FLAC, OGG, MP3 };
 
 struct ExportSettings {
     juce::File destFile;
@@ -29,6 +29,7 @@ struct ExportSettings {
     bool normalize = false;
     ExportFormat format = ExportFormat::WAV;
     int oggQuality = 5;
+    int mp3Bitrate = 320;
 };
 
 class EditManager : public QObject {

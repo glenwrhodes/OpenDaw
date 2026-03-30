@@ -8,6 +8,7 @@
 #include "AutomationLaneItem.h"
 #include "AutomationLaneHeader.h"
 #include "MarkerTempoLane.h"
+#include "VideoTrackLane.h"
 #include "engine/EditManager.h"
 #include <QWidget>
 #include <QGraphicsView>
@@ -112,6 +113,8 @@ public slots:
     void setSelectedTrack(te::AudioTrack* track);
     void clearTrackSelection();
     void toggleMarkerTempoLane();
+    void toggleVideoLane();
+    VideoTrackLane* videoLane() const { return videoLane_; }
 
 private:
     bool eventFilter(QObject* watched, QEvent* event) override;
@@ -136,6 +139,9 @@ private:
 
     MarkerTempoLane* markerTempoLane_ = nullptr;
     QWidget* markerTempoRow_ = nullptr;
+
+    VideoTrackLane* videoLane_ = nullptr;
+    QWidget* videoRow_ = nullptr;
 
     QHBoxLayout* bodyLayout_;
     QScrollArea* headerScrollArea_;

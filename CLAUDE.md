@@ -12,7 +12,7 @@ All commands must run from a **Visual Studio Developer Command Prompt** (or wrap
 
 **Configure:**
 ```powershell
-cmd /c "`"C:\Program Files\Microsoft Visual Studio\2022\Community\VC\Auxiliary\Build\vcvarsall.bat`" x64 && c:\qt\Tools\CMake_64\bin\cmake.exe -B build -G Ninja -DCMAKE_PREFIX_PATH=c:/qt/6.10.2/msvc2022_64 -DCMAKE_C_COMPILER=cl -DCMAKE_CXX_COMPILER=cl -DCMAKE_MAKE_PROGRAM=c:/qt/Tools/Ninja/ninja.exe"
+cmd /c "`"C:\Program Files\Microsoft Visual Studio\2022\Community\VC\Auxiliary\Build\vcvarsall.bat`" x64 && c:\qt\Tools\CMake_64\bin\cmake.exe -B build -G Ninja -DCMAKE_PREFIX_PATH=c:/qt/6.10.2/msvc2022_64 -DCMAKE_TOOLCHAIN_FILE=c:/vcpkg/scripts/buildsystems/vcpkg.cmake -DCMAKE_C_COMPILER=cl -DCMAKE_CXX_COMPILER=cl -DCMAKE_MAKE_PROGRAM=c:/qt/Tools/Ninja/ninja.exe"
 ```
 
 **Build:**
@@ -84,6 +84,25 @@ All project code lives in the `OpenDaw` namespace. The `DONT_SET_USING_JUCE_NAME
 | `src/app/JuceQtBridge.h` | QTimer-based JUCE message pump |
 | `src/ui/timeline/GridSnapper.h` | Beat/pixel conversion and snap logic |
 | `CMakeLists.txt` | Single build file; all sources listed here |
+
+## External Dependencies
+
+### FFmpeg (video thumbnails + MP3 export)
+FFmpeg C libraries are linked at build time for video frame extraction and MP3 encoding.
+
+**Windows (vcpkg):**
+```powershell
+git clone --depth 1 https://github.com/microsoft/vcpkg.git c:\vcpkg
+c:\vcpkg\bootstrap-vcpkg.bat
+c:\vcpkg\vcpkg install ffmpeg[core,avformat,avcodec,swscale,swresample,mp3lame]:x64-windows
+```
+Pass `-DCMAKE_TOOLCHAIN_FILE=c:/vcpkg/scripts/buildsystems/vcpkg.cmake` to CMake configure.
+
+**macOS:** `brew install ffmpeg`
+**Linux:** `sudo apt install libavformat-dev libavcodec-dev libavutil-dev libswscale-dev libswresample-dev`
+
+### Video Track
+A single video file can be attached per Edit (stored via `Edit::setVideoFile`/`Edit::getVideoFile`). The `VideoTrackLane` widget renders frame thumbnails synced to the timeline's beat/pixel coordinate system. `VideoThumbnailCache` wraps FFmpeg's C API for async frame extraction with LRU caching.
 
 ## Submodules
 
