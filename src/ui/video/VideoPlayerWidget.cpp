@@ -5,6 +5,7 @@
 #include <QHBoxLayout>
 #include <cmath>
 #include <algorithm>
+#include <thread>
 
 extern "C" {
 #include <libavutil/imgutils.h>
