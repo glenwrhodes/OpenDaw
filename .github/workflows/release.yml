@@ -93,6 +93,10 @@ jobs:
 
   build-macos:
     runs-on: macos-latest
+    env:
+      HAS_SIGNING_CERT: ${{ secrets.MACOS_CERTIFICATE != '' }}
+      HAS_SIGNING_ID: ${{ secrets.MACOS_SIGNING_IDENTITY != '' }}
+      HAS_NOTARIZE: ${{ secrets.MACOS_NOTARIZE_APPLE_ID != '' }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -133,7 +137,7 @@ jobs:
           "${{ env.QT_ROOT_DIR }}/bin/macdeployqt" "build/OpenDaw_artefacts/Release/OpenDaw.app"
 
       - name: Import signing certificate
-        if: ${{ secrets.MACOS_CERTIFICATE != '' }}
+        if: env.HAS_SIGNING_CERT == 'true'
         env:
           MACOS_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE }}
           MACOS_CERTIFICATE_PWD: ${{ secrets.MACOS_CERTIFICATE_PWD }}
@@ -173,7 +177,7 @@ jobs:
             "OpenDaw-v${VERSION}-mac.dmg"
 
       - name: Sign DMG
-        if: ${{ secrets.MACOS_SIGNING_IDENTITY != '' }}
+        if: env.HAS_SIGNING_ID == 'true'
         env:
           MACOS_SIGNING_IDENTITY: ${{ secrets.MACOS_SIGNING_IDENTITY }}
         run: |
@@ -182,7 +186,7 @@ jobs:
             "OpenDaw-v${VERSION}-mac.dmg"
 
       - name: Notarize DMG
-        if: ${{ secrets.MACOS_NOTARIZE_APPLE_ID != '' }}
+        if: env.HAS_NOTARIZE == 'true'
         env:
           MACOS_NOTARIZE_APPLE_ID: ${{ secrets.MACOS_NOTARIZE_APPLE_ID }}
           MACOS_NOTARIZE_PASSWORD: ${{ secrets.MACOS_NOTARIZE_PASSWORD }}
