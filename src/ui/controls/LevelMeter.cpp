@@ -37,14 +37,14 @@ void LevelMeter::paintEvent(QPaintEvent*)
     p.setRenderHint(QPainter::Antialiasing, false);
 
     auto drawBar = [&](QRectF rect, float level, float peak) {
-        p.fillRect(rect, QColor(18, 18, 22));
+        p.fillRect(rect, theme.controlTrack);
 
         double levelH = rect.height() * level;
         QRectF levelRect(rect.left(), rect.bottom() - levelH,
                          rect.width(), levelH);
 
         QLinearGradient grad(rect.bottomLeft(), rect.topLeft());
-        grad.setColorAt(0.0,  QColor(0, 100, 90));
+        grad.setColorAt(0.0,  theme.meterGreen.darker(170));
         grad.setColorAt(0.5,  theme.meterGreen);
         grad.setColorAt(0.85, theme.meterYellow);
         grad.setColorAt(0.95, theme.meterRed);
@@ -74,7 +74,7 @@ void LevelMeter::paintEvent(QPaintEvent*)
     QRectF outer(0, 0, width(), height());
     p.setRenderHint(QPainter::Antialiasing, true);
     p.setPen(Qt::NoPen);
-    p.setBrush(QColor(8, 8, 12));
+    p.setBrush(theme.separator);
     p.drawRoundedRect(outer, 3, 3);
     p.setRenderHint(QPainter::Antialiasing, false);
 

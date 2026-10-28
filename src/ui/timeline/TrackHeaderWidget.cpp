@@ -263,8 +263,8 @@ TrackHeaderWidget::TrackHeaderWidget(te::AudioTrack* track, EditManager* editMgr
                 "border-radius: 3px; border: 1px solid %1; }"
                 "QSlider::handle:horizontal:hover { background: %4; }"
                 "QSlider::sub-page:horizontal { background: %3; border-radius: 2px; }")
-            .arg(theme.separator.name(), QColor(196, 199, 205).name(),
-                 "%SUBPAGE%", QColor(230, 232, 236).name());
+            .arg(theme.controlTrack.name(), theme.controlHandle.name(),
+                 "%SUBPAGE%", theme.controlHandle.lighter(115).name());
 
     volumeSlider_ = new QSlider(Qt::Horizontal, mixRow);
     volumeSlider_->setAccessibleName("Volume");
@@ -295,7 +295,7 @@ TrackHeaderWidget::TrackHeaderWidget(te::AudioTrack* track, EditManager* editMgr
     panKnob_->setRange(-100, 100);
     panKnob_->setValue(0);
     panKnob_->setFixedWidth(46);
-    panKnob_->setStyleSheet(QString(sliderStyle).replace("%SUBPAGE%", theme.separator.name()));
+    panKnob_->setStyleSheet(QString(sliderStyle).replace("%SUBPAGE%", theme.controlTrack.name()));
     panKnob_->installEventFilter(this);
     connect(panKnob_, &QSlider::valueChanged, this, [this](int v) {
         if (!track_) return;
@@ -567,16 +567,17 @@ void TrackHeaderWidget::contextMenuEvent(QContextMenuEvent* event)
     menu.addAction("Rename...", this, [this]() { startRenameEdit(); });
     auto* colourMenu = menu.addMenu("Track Colour");
     colourMenu->setAccessibleName("Track Colour");
-    for (const QColor& c : ThemeManager::trackPalette()) {
+    const auto& palette = ThemeManager::trackPalette();
+    for (int slot = 0; slot < int(palette.size()); ++slot) {
         QPixmap swatch(14, 14);
-        swatch.fill(c);
+        swatch.fill(palette[size_t(slot)]);
         auto* mgr = editMgr_;
         const auto trackId = track_->itemID;
         // Queued: the colour change rebuilds the headers, including this one.
-        colourMenu->addAction(QIcon(swatch), QString(), mgr, [mgr, trackId, c]() {
-            QTimer::singleShot(0, mgr, [mgr, trackId, c]() {
+        colourMenu->addAction(QIcon(swatch), QString(), mgr, [mgr, trackId, slot]() {
+            QTimer::singleShot(0, mgr, [mgr, trackId, slot]() {
                 for (auto* t : mgr->getAudioTracks())
-                    if (t->itemID == trackId) { mgr->setTrackColour(*t, c); break; }
+                    if (t->itemID == trackId) { mgr->setTrackColourSlot(*t, slot); break; }
             });
         });
     }

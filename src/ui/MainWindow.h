@@ -45,11 +45,16 @@ public:
 
     void loadFile(const QString& path);
 
+    // Window rebuild (theme change): keep what lives in the window across it.
+    void prepareForRebuild();
+    void finishRebuild();
+
 protected:
     void closeEvent(QCloseEvent* event) override;
 
 private:
     bool maybeSaveBeforeAction();
+    void addThemeMenu(QMenu* parent);
     void addRecentProject(const QString& path);
     void rebuildRecentMenu();
     void openRecentProject(const QString& path);

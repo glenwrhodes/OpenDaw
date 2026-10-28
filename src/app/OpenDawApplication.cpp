@@ -1,6 +1,7 @@
 #include "OpenDawApplication.h"
 #include "ui/MainWindow.h"
 #include "ui/dialogs/RecoveryDialog.h"
+#include "utils/ThemeManager.h"
 #include <QDebug>
 #include <QFile>
 
@@ -66,10 +67,23 @@ void OpenDawApplication::checkRecovery(QWidget* splashToHide)
 void OpenDawApplication::showMainWindow()
 {
     qDebug() << "[init] creating MainWindow";
+    ThemeManager::instance().loadSaved();
     mainWindow_ = std::make_unique<MainWindow>(*this);
     qDebug() << "[init] MainWindow created, showing";
     mainWindow_->show();
     qDebug() << "[init] MainWindow shown";
+}
+
+void OpenDawApplication::rebuildMainWindow()
+{
+    qDebug() << "[theme] rebuilding main window";
+    if (mainWindow_) {
+        mainWindow_->prepareForRebuild();
+        mainWindow_.reset();
+    }
+    mainWindow_ = std::make_unique<MainWindow>(*this);
+    mainWindow_->show();
+    mainWindow_->finishRebuild();
 }
 
 } // namespace OpenDaw

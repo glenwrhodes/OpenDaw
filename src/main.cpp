@@ -115,9 +115,6 @@ int main(int argc, char* argv[])
 
     qtApp.setWindowIcon(QIcon(":/icon.png"));
 
-    qtApp.setStyleSheet(
-        "QToolTip { background: #3a3a3a; color: #dcdcdc; border: 1px solid #666; "
-        "padding: 3px; font-size: 11px; }");
 
     // Keep the previous run's log so a crash report survives the next launch.
     const QString logPath = QApplication::applicationDirPath() + "/OpenDaw.log";

@@ -3,6 +3,8 @@
 #include "utils/ThemeManager.h"
 #include "utils/IconFont.h"
 #include <QDialog>
+#include <QFrame>
+#include <QGridLayout>
 #include <QSettings>
 #include <QVBoxLayout>
 #include <cmath>
@@ -26,7 +28,9 @@ TransportBar::TransportBar(EditManager* editMgr, QWidget* parent)
     layout->setSpacing(6);
 
     const QFont iconFont = icons::fontAudio(17);
-    const QSize transportButtonSize(38, 34);
+    // Every button and box in the row shares one height, so they line up.
+    constexpr int kRowHeight = 34;
+    const QSize transportButtonSize(38, kRowHeight);
 
     auto makeTransportBtn = [&](const QChar& glyph, const QString& name,
                                 const QColor& activeColor, bool checkable = false) {
@@ -42,28 +46,10 @@ TransportBar::TransportBar(EditManager* editMgr, QWidget* parent)
 
     auto makeSeparator = [&]() {
         auto* sep = new QFrame(this);
-        sep->setFixedSize(1, 34);
+        sep->setFixedSize(1, kRowHeight);
         sep->setStyleSheet(QString("QFrame { background: %1; border: none; }")
                                .arg(theme.separator.name()));
         return sep;
-    };
-
-    // Small caption above a value, as on hardware counters.
-    auto makeField = [&](const QString& caption, QWidget* value) {
-        auto* box = new QWidget(this);
-        box->setAttribute(Qt::WA_TranslucentBackground);
-        box->setStyleSheet("background: transparent;");
-        auto* v = new QVBoxLayout(box);
-        v->setContentsMargins(0, 0, 0, 0);
-        v->setSpacing(1);
-        auto* label = new QLabel(caption, box);
-        label->setStyleSheet(
-            QString("QLabel { color: %1; font-size: 9px; font-weight: bold; "
-                    "letter-spacing: 1px; background: transparent; }")
-                .arg(theme.textDim.name()));
-        v->addWidget(label);
-        v->addWidget(value);
-        return box;
     };
 
     // ── Transport buttons ──
@@ -83,7 +69,7 @@ TransportBar::TransportBar(EditManager* editMgr, QWidget* parent)
     countInBtn_->setAccessibleName("Count-In Before Recording");
     countInBtn_->setToolTip("Count-in before recording");
     countInBtn_->setCheckable(true);
-    countInBtn_->setFixedSize(72, 34);
+    countInBtn_->setFixedSize(72, kRowHeight);
     applyButtonStyle(countInBtn_, theme.accent);
 
     countInCombo_ = new QComboBox(this);
@@ -93,15 +79,14 @@ TransportBar::TransportBar(EditManager* editMgr, QWidget* parent)
     countInCombo_->addItem("2 Bars", 2);
     countInCombo_->addItem("1 Beat", 4);
     countInCombo_->addItem("2 Beats", 3);
-    countInCombo_->setFixedWidth(78);
-    countInCombo_->setFixedHeight(28);
+    countInCombo_->setFixedSize(84, kRowHeight);
     countInCombo_->setEnabled(false);
 
     panicBtn_ = new QPushButton(this);
     panicBtn_->setAccessibleName("MIDI Panic - Stop All Notes");
     panicBtn_->setToolTip("MIDI panic: stop all notes and reset (Ctrl+Shift+P)");
     panicBtn_->setText("PANIC");
-    panicBtn_->setFixedSize(54, 28);
+    panicBtn_->setFixedSize(58, kRowHeight);
     panicBtn_->setStyleSheet(
         QString("QPushButton { background: %1; color: %2; border: 1px solid %3; "
                 "border-radius: 4px; font-size: 9px; font-weight: bold; letter-spacing: 1px; }"
@@ -115,7 +100,7 @@ TransportBar::TransportBar(EditManager* editMgr, QWidget* parent)
     engineBtn_->setToolTip("Audio engine: click to turn off/on");
     engineBtn_->setCheckable(true);
     engineBtn_->setChecked(true);
-    engineBtn_->setFixedSize(84, 28);
+    engineBtn_->setFixedSize(88, kRowHeight);
     updateEngineButtonStyle();
 
     connect(rtzBtn_,       &QPushButton::clicked, this, [this]() {
@@ -180,35 +165,69 @@ TransportBar::TransportBar(EditManager* editMgr, QWidget* parent)
     layout->addWidget(counter);
     layout->addSpacing(8);
 
-    // ── Tempo, meter, grid ──
-    bpmSpin_ = new QDoubleSpinBox(this);
+    // ── Tempo, meter, grid: a second display panel beside the counter ──
+    auto* info = new QFrame(this);
+    info->setObjectName("transportInfo");
+    info->setFixedHeight(counter->height());
+    const QColor& lcd = theme.lcdText;
+    auto lcdAlpha = [&](int a) {
+        return QString("rgba(%1,%2,%3,%4)").arg(lcd.red()).arg(lcd.green()).arg(lcd.blue()).arg(a);
+    };
+    info->setStyleSheet(
+        QString("QFrame#transportInfo { background: %1; border: 1px solid %2; border-radius: 5px; }"
+                "QLabel { color: %3; background: transparent; font-size: 9px; "
+                "  font-weight: bold; letter-spacing: 1px; }"
+                "QLabel#meterSlash { font-size: 14px; letter-spacing: 0px; }"
+                "QAbstractSpinBox, QComboBox { background: transparent; color: %4; "
+                "  border: 1px solid transparent; border-radius: 3px; padding: 0px 3px; "
+                "  min-height: 0px; font-family: 'Consolas', 'Cascadia Mono', monospace; "
+                "  font-size: 14px; font-weight: bold; }"
+                "QAbstractSpinBox:hover, QComboBox:hover { background: %5; border-color: %6; }"
+                "QAbstractSpinBox:focus { border-color: %7; }"
+                "QComboBox::drop-down { border: none; width: 12px; }"
+                "QComboBox::down-arrow { image: url(%8); width: 9px; height: 6px; }")
+            .arg(theme.lcdBackground.name(), theme.separator.name(), lcdAlpha(150),
+                 lcd.name(), lcdAlpha(28), lcdAlpha(60), theme.accent.name(),
+                 ThemeManager::dropDownArrowPath(lcd)));
+    auto* infoLayout = new QGridLayout(info);
+    infoLayout->setContentsMargins(8, 4, 8, 4);
+    infoLayout->setHorizontalSpacing(10);
+    infoLayout->setVerticalSpacing(0);
+
+    constexpr int kValueHeight = 22;
+    // Values are typed, scrolled or nudged with the arrow keys; spin buttons would not fit.
+    const QString valueHint = "Type a value, or scroll over it to change it";
+
+    bpmSpin_ = new QDoubleSpinBox(info);
     bpmSpin_->setAccessibleName("Tempo BPM");
+    bpmSpin_->setToolTip("Tempo (BPM). " + valueHint);
     bpmSpin_->setRange(20.0, 300.0);
     bpmSpin_->setDecimals(1);
     bpmSpin_->setValue(editMgr_->getBpm());
-    bpmSpin_->setFixedWidth(78);
-    bpmSpin_->setFixedHeight(24);
+    bpmSpin_->setButtonSymbols(QAbstractSpinBox::NoButtons);
+    bpmSpin_->setFixedSize(58, kValueHeight);
     connect(bpmSpin_, qOverload<double>(&QDoubleSpinBox::valueChanged),
             this, &TransportBar::onBpmChanged);
-    layout->addWidget(makeField("TEMPO", bpmSpin_));
 
-    timeSigNumSpin_ = new QSpinBox(this);
+    timeSigNumSpin_ = new QSpinBox(info);
     timeSigNumSpin_->setAccessibleName("Time Signature Numerator");
+    timeSigNumSpin_->setToolTip("Beats per bar. " + valueHint);
     timeSigNumSpin_->setRange(1, 16);
     timeSigNumSpin_->setValue(editMgr_->getTimeSigNumerator());
-    timeSigNumSpin_->setFixedWidth(46);
-    timeSigNumSpin_->setFixedHeight(24);
+    timeSigNumSpin_->setButtonSymbols(QAbstractSpinBox::NoButtons);
+    timeSigNumSpin_->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
+    timeSigNumSpin_->setFixedSize(28, kValueHeight);
     connect(timeSigNumSpin_, qOverload<int>(&QSpinBox::valueChanged),
             this, &TransportBar::onTimeSigNumChanged);
 
-    timeSigDenCombo_ = new QComboBox(this);
+    timeSigDenCombo_ = new QComboBox(info);
     timeSigDenCombo_->setAccessibleName("Time Signature Denominator");
     for (int d : {1, 2, 4, 8, 16})
         timeSigDenCombo_->addItem(QString::number(d), d);
     int denIdx = timeSigDenCombo_->findData(editMgr_->getTimeSigDenominator());
     if (denIdx >= 0) timeSigDenCombo_->setCurrentIndex(denIdx);
-    timeSigDenCombo_->setFixedWidth(50);
-    timeSigDenCombo_->setFixedHeight(24);
+    timeSigDenCombo_->setToolTip("Beat unit");
+    timeSigDenCombo_->setFixedSize(40, kValueHeight);
     connect(timeSigDenCombo_, qOverload<int>(&QComboBox::currentIndexChanged),
             this, [this](int idx) {
                 if (!editMgr_ || !editMgr_->edit()) return;
@@ -216,21 +235,16 @@ TransportBar::TransportBar(EditManager* editMgr, QWidget* parent)
                 editMgr_->setTimeSignature(timeSigNumSpin_->value(), den);
             });
 
-    auto* meterBox = new QWidget(this);
-    meterBox->setAttribute(Qt::WA_TranslucentBackground);
-    meterBox->setStyleSheet("background: transparent;");
-    auto* meterLayout = new QHBoxLayout(meterBox);
+    auto* meterLayout = new QHBoxLayout;
     meterLayout->setContentsMargins(0, 0, 0, 0);
-    meterLayout->setSpacing(3);
-    auto* slash = new QLabel("/", meterBox);
-    slash->setStyleSheet(QString("QLabel { color: %1; font-size: 12px; background: transparent; }")
-                             .arg(theme.textDim.name()));
+    meterLayout->setSpacing(0);
+    auto* slash = new QLabel("/", info);
+    slash->setObjectName("meterSlash");
     meterLayout->addWidget(timeSigNumSpin_);
     meterLayout->addWidget(slash);
     meterLayout->addWidget(timeSigDenCombo_);
-    layout->addWidget(makeField("METER", meterBox));
 
-    snapCombo_ = new QComboBox(this);
+    snapCombo_ = new QComboBox(info);
     snapCombo_->setAccessibleName("Grid Snap Mode");
     snapCombo_->setToolTip("Snap to grid");
     snapCombo_->addItem("Off",  int(SnapMode::Off));
@@ -241,13 +255,25 @@ TransportBar::TransportBar(EditManager* editMgr, QWidget* parent)
     snapCombo_->addItem("1/16", int(SnapMode::QuarterBeat));
     snapCombo_->addItem("1/32", int(SnapMode::EighthBeat));
     snapCombo_->setCurrentIndex(3);
-    snapCombo_->setFixedWidth(72);
-    snapCombo_->setFixedHeight(24);
+    snapCombo_->setFixedSize(58, kValueHeight);
     connect(snapCombo_, qOverload<int>(&QComboBox::currentIndexChanged),
             this, [this](int idx) {
                 emit snapModeRequested(snapCombo_->itemData(idx).toInt());
             });
-    layout->addWidget(makeField("GRID", snapCombo_));
+
+    // Captions sit over the value text (inset past the box's border and padding).
+    auto addCaption = [&](const QString& text, int column) {
+        auto* label = new QLabel(text, info);
+        label->setContentsMargins(4, 0, 0, 0);
+        infoLayout->addWidget(label, 0, column);
+    };
+    addCaption("TEMPO", 0);
+    addCaption("METER", 1);
+    addCaption("GRID", 2);
+    infoLayout->addWidget(bpmSpin_, 1, 0);
+    infoLayout->addLayout(meterLayout, 1, 1);
+    infoLayout->addWidget(snapCombo_, 1, 2);
+    layout->addWidget(info);
 
     layout->addStretch();
 

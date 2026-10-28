@@ -26,6 +26,8 @@
 #include <QComboBox>
 #include <QShortcutEvent>
 #include <QTabBar>
+#include <QActionGroup>
+#include <QPainter>
 #include <QFontMetrics>
 #include <QTimer>
 #include <QtConcurrent/QtConcurrent>
@@ -330,6 +332,10 @@ void MainWindow::applyGlobalStyle()
         "  border-radius: 4px; padding: 3px 8px; min-height: 20px; }"
         "QComboBox:hover { border-color: " + hoverBorder + "; }"
         "QComboBox::drop-down { border: none; width: 20px; }"
+        "QComboBox::down-arrow { image: url(" + ThemeManager::dropDownArrowPath(theme.textDim)
+            + "); width: 9px; height: 6px; }"
+        "QComboBox::down-arrow:disabled { image: url("
+            + ThemeManager::dropDownArrowPath(theme.border) + "); }"
         "QComboBox QAbstractItemView { background: %2; color: %3; "
         "  selection-background-color: %5; border: 1px solid %4; border-radius: 4px; }"
 
@@ -365,6 +371,10 @@ void MainWindow::applyGlobalStyle()
     );
 
     setStyleSheet(globalSS);
+    qApp->setStyleSheet(
+        QString("QToolTip { background: %1; color: %2; border: 1px solid %3; "
+                "padding: 3px; font-size: 11px; }")
+            .arg(theme.surfaceLight.name(), theme.text.name(), theme.border.name()));
 }
 
 void MainWindow::createMenus()
@@ -470,6 +480,7 @@ void MainWindow::createMenus()
     });
 
     editMenu->addSeparator();
+    addThemeMenu(editMenu);
     editMenu->addAction("AI &Preferences...", this, [this]() {
         if (aiChatWidget_)
             aiChatWidget_->openSettings();
@@ -1086,6 +1097,61 @@ void MainWindow::loadFile(const QString& path)
         QMessageBox::warning(this, "Open Project",
             QString("Could not open \"%1\".").arg(fi.fileName()));
     }
+}
+
+// ── Themes ──────────────────────────────────────────────────────────────────
+
+void MainWindow::addThemeMenu(QMenu* parent)
+{
+    auto* themeMenu = parent->addMenu("&Theme");
+    themeMenu->setAccessibleName("Theme");
+    auto* group = new QActionGroup(themeMenu);
+    group->setExclusive(true);
+
+    const QString currentName = ThemeManager::instance().current().name;
+    for (const auto& theme : ThemeManager::builtInThemes()) {
+        // A strip of the theme's own colours, so the list previews itself.
+        QPixmap swatch(30, 14);
+        swatch.fill(theme.background);
+        {
+            QPainter p(&swatch);
+            p.fillRect(QRect(0, 0, 10, 14), theme.surface);
+            p.fillRect(QRect(10, 0, 10, 14), theme.accent);
+            p.fillRect(QRect(20, 0, 10, 14),
+                       theme.trackColours.empty() ? theme.text : theme.trackColours[1]);
+            p.setPen(theme.separator);
+            p.drawRect(swatch.rect().adjusted(0, 0, -1, -1));
+        }
+        auto* action = themeMenu->addAction(QIcon(swatch), theme.name);
+        action->setCheckable(true);
+        action->setChecked(theme.name == currentName);
+        group->addAction(action);
+
+        const QString name = theme.name;
+        connect(action, &QAction::triggered, this, [this, name]() {
+            if (name == ThemeManager::instance().current().name) return;
+            ThemeManager::instance().setCurrentByName(name);
+            ThemeManager::saveChoice(name);
+            // Every widget bakes its colours in when it is built, so rebuild the
+            // window. Queued: this action belongs to the window being replaced.
+            auto* app = &app_;
+            QTimer::singleShot(0, app, [app]() { app->rebuildMainWindow(); });
+        });
+    }
+}
+
+void MainWindow::prepareForRebuild()
+{
+    saveWindowLayout();
+    if (routingView_) routingView_->flushNodePositions();
+    if (aiChatWidget_) aiChatWidget_->saveChatSessions();
+}
+
+void MainWindow::finishRebuild()
+{
+    if (aiChatWidget_) aiChatWidget_->loadChatSessions();
+    statusBar()->showMessage(
+        QString("Theme: %1").arg(ThemeManager::instance().current().name), 4000);
 }
 
 // ── Recent projects ─────────────────────────────────────────────────────────

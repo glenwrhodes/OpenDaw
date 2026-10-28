@@ -22,6 +22,10 @@ public:
     bool initialize();
     void checkRecovery(QWidget* splashToHide = nullptr);
     void showMainWindow();
+    // Recreates the main window (e.g. after a theme change). The project, engine
+    // and playback live outside it and carry on. Must not be called from inside
+    // the old window's event handling; queue it.
+    void rebuildMainWindow();
 
     AudioEngine&  audioEngine()  { return *audioEngine_; }
     EditManager&  editManager()  { return *editManager_; }

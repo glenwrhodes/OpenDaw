@@ -14,6 +14,9 @@ namespace metrics {
 }
 
 struct Theme {
+    QString name {"Studio Graphite"};
+    bool isLight = false;   // dark text on light panels
+
     // Neutral graphite UI: dark separators between lighter panels, one blue accent.
     QColor background         {29, 30, 33};
     QColor surface            {40, 41, 45};
@@ -44,6 +47,11 @@ struct Theme {
     QColor lcdText            {150, 228, 172};
     QColor lcdBackground      {13, 14, 16};
 
+    // Faders, knobs and sliders.
+    QColor controlBody        {72, 76, 84};     // knob cap, fader thumb
+    QColor controlTrack       {18, 18, 22};     // fader/meter well, knob arc
+    QColor controlHandle      {196, 199, 205};  // small slider handles
+
     QColor midiClipBody           {60, 95, 145, 180};
     QColor midiClipBodySelected   {80, 125, 180, 200};
     QColor midiNotePreview        {140, 190, 255};
@@ -57,6 +65,9 @@ struct Theme {
     QColor pianoKeyBlack          {34, 34, 40};
     QColor pianoKeyBorder         {160, 160, 160};
     QColor pianoRollVelocityBar   {100, 180, 255};
+
+    // Colours tracks cycle through. Tracks store a slot, so they follow the theme.
+    std::vector<QColor> trackColours;
 };
 
 class ThemeManager {
@@ -66,11 +77,20 @@ public:
     const Theme& current() const { return theme_; }
     void setCurrent(const Theme& t) { theme_ = t; }
 
-    // Muted, distinct colours new tracks cycle through.
+    static const std::vector<Theme>& builtInThemes();
+    bool setCurrentByName(const QString& name);   // false if there is no such theme
+    void loadSaved();                             // the theme chosen last session
+    static void saveChoice(const QString& name);
+
+    // The current theme's track colours.
     static const std::vector<QColor>& trackPalette();
 
+    // A small down chevron in the given colour, as a file stylesheets can use with
+    // url(). Combo boxes draw no arrow of their own once they are styled.
+    static QString dropDownArrowPath(const QColor& colour);
+
 private:
-    ThemeManager() = default;
+    ThemeManager();
     Theme theme_;
 };
 

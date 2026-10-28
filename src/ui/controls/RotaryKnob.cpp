@@ -50,7 +50,7 @@ void RotaryKnob::paintEvent(QPaintEvent*)
     const double angle = minAngle + fullSpan * normalised();
     const bool isBipolar = (min_ < 0.0 && max_ > 0.0);
 
-    QPen arcPen(QColor(38, 40, 46), 3.5, Qt::SolidLine, Qt::RoundCap);
+    QPen arcPen(theme.controlTrack, 3.5, Qt::SolidLine, Qt::RoundCap);
     p.setPen(arcPen);
     p.drawArc(knobRect, int(minAngle * 16), int(fullSpan * 16));
 
@@ -79,11 +79,11 @@ void RotaryKnob::paintEvent(QPaintEvent*)
     p.drawEllipse(shadowRect);
 
     QRadialGradient grad(innerRect.center(), innerRect.width() / 2.0);
-    grad.setColorAt(0.0, QColor(72, 76, 84));
-    grad.setColorAt(0.85, QColor(44, 46, 52));
-    grad.setColorAt(1.0, QColor(36, 38, 44));
+    grad.setColorAt(0.0, theme.controlBody);
+    grad.setColorAt(0.85, theme.controlBody.darker(160));
+    grad.setColorAt(1.0, theme.controlBody.darker(190));
     p.setBrush(grad);
-    p.setPen(QPen(QColor(28, 30, 34), 0.5));
+    p.setPen(QPen(theme.separator, 0.5));
     p.drawEllipse(innerRect);
 
     const double angleRad = angle * M_PI / 180.0;

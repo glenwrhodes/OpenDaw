@@ -74,18 +74,18 @@ void VolumeFader::paintEvent(QPaintEvent*)
     auto tr = trackRect();
 
     p.setPen(Qt::NoPen);
-    p.setBrush(QColor(18, 18, 22));
+    p.setBrush(theme.controlTrack);
     p.drawRoundedRect(tr, 2, 2);
 
     double fillY = valueToY(value_);
     QRectF fillRect(tr.left(), fillY, tr.width(), tr.bottom() - fillY);
     QLinearGradient fillGrad(fillRect.bottomLeft(), fillRect.topLeft());
-    fillGrad.setColorAt(0.0, QColor(0, 120, 108));
+    fillGrad.setColorAt(0.0, theme.accent.darker(160));
     fillGrad.setColorAt(1.0, theme.accent);
     p.setBrush(fillGrad);
     p.drawRoundedRect(fillRect, 2, 2);
 
-    p.setPen(QColor(190, 194, 200));
+    p.setPen(theme.textDim);
     QFont f = font();
     f.setPixelSize(8);
     p.setFont(f);
@@ -101,11 +101,11 @@ void VolumeFader::paintEvent(QPaintEvent*)
 
     auto thumb = thumbRect();
     QLinearGradient grad(thumb.topLeft(), thumb.bottomLeft());
-    grad.setColorAt(0.0, QColor(88, 92, 100));
-    grad.setColorAt(0.5, QColor(68, 72, 78));
-    grad.setColorAt(1.0, QColor(52, 54, 60));
+    grad.setColorAt(0.0, theme.controlBody.lighter(125));
+    grad.setColorAt(0.5, theme.controlBody);
+    grad.setColorAt(1.0, theme.controlBody.darker(125));
     p.setBrush(grad);
-    p.setPen(QPen(QColor(40, 42, 48), 0.5));
+    p.setPen(QPen(theme.separator, 0.5));
     p.drawRoundedRect(thumb, 4, 4);
 
     p.setPen(QPen(theme.accentLight, 1.0));

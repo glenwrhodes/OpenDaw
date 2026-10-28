@@ -735,37 +735,60 @@ bool EditManager::isClipValid(te::Clip* clip) const
     return false;
 }
 
-QColor EditManager::getTrackColour(te::Track* track) const
+// Tracks remember a slot in the theme's palette rather than an RGB value, so
+// changing theme recolours them. An explicit colour (from Tracktion or an older
+// build) still wins, unless it is one of the default theme's palette colours.
+static const juce::Identifier kTrackColourSlotProp("OpenDaw_colourSlot");
+
+static int defaultPaletteSlot(const juce::Colour& c)
 {
-    if (track) {
-        auto c = track->getColour();
-        if (c.getAlpha() > 0)
-            return QColor(c.getRed(), c.getGreen(), c.getBlue());
-    }
-    const auto& palette = ThemeManager::trackPalette();
-    int index = track ? getAudioTracks().indexOf(dynamic_cast<te::AudioTrack*>(track)) : 0;
-    return palette[size_t(std::max(0, index)) % palette.size()];
+    const auto& graphite = ThemeManager::builtInThemes().front().trackColours;
+    for (size_t i = 0; i < graphite.size(); ++i)
+        if (graphite[i] == QColor(c.getRed(), c.getGreen(), c.getBlue()))
+            return int(i);
+    return -1;
 }
 
-void EditManager::setTrackColour(te::Track& track, const QColor& colour)
+QColor EditManager::getTrackColour(te::Track* track) const
 {
-    track.setColour(juce::Colour(juce::uint8(colour.red()), juce::uint8(colour.green()),
-                                 juce::uint8(colour.blue())));
+    const auto& palette = ThemeManager::trackPalette();
+    auto fromSlot = [&](int slot) { return palette[size_t(std::max(0, slot)) % palette.size()]; };
+
+    if (track) {
+        if (track->state.hasProperty(kTrackColourSlotProp))
+            return fromSlot(int(track->state.getProperty(kTrackColourSlotProp)));
+        auto c = track->getColour();
+        if (c.getAlpha() > 0) {
+            int slot = defaultPaletteSlot(c);
+            return slot >= 0 ? fromSlot(slot) : QColor(c.getRed(), c.getGreen(), c.getBlue());
+        }
+    }
+    int index = track ? getAudioTracks().indexOf(dynamic_cast<te::AudioTrack*>(track)) : 0;
+    return fromSlot(index);
+}
+
+void EditManager::setTrackColourSlot(te::Track& track, int slot)
+{
+    if (!edit_) return;
+    auto* um = &edit_->getUndoManager();
+    track.state.setProperty(kTrackColourSlotProp, slot, um);
     markDirtyAndNotify();
 }
 
 void EditManager::assignMissingTrackColours()
 {
     if (!edit_) return;
-    const auto& palette = ThemeManager::trackPalette();
     auto tracks = getAudioTracks();
     for (int i = 0; i < tracks.size(); ++i) {
-        if (tracks[i]->getColour().getAlpha() > 0) continue;
+        auto& state = tracks[i]->state;
+        if (state.hasProperty(kTrackColourSlotProp)) continue;
+        int slot = i;
+        if (tracks[i]->getColour().getAlpha() > 0) {
+            slot = defaultPaletteSlot(tracks[i]->getColour());
+            if (slot < 0) continue;   // a custom colour: leave it
+        }
         // No undo: the colour a track is born with shouldn't be an undo step.
-        const QColor& c = palette[size_t(i) % palette.size()];
-        juce::Colour colour(juce::uint8(c.red()), juce::uint8(c.green()), juce::uint8(c.blue()));
-        tracks[i]->state.setProperty(te::IDs::colour,
-                                     juce::VariantConverter<juce::Colour>::toVar(colour), nullptr);
+        state.setProperty(kTrackColourSlotProp, slot, nullptr);
     }
 }
 

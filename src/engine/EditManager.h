@@ -80,9 +80,9 @@ public:
     bool isClipValid(te::Clip* clip) const;
     void removeClip(te::Clip* clip);
 
-    // Track colours (headers, clips, mixer). Tracks without one get a palette colour.
+    // Track colours (headers, clips, mixer): a slot in the current theme's palette.
     QColor getTrackColour(te::Track* track) const;
-    void setTrackColour(te::Track& track, const QColor& colour);
+    void setTrackColourSlot(te::Track& track, int slot);
 
     // Piano hand split. Notes of every MIDI clip on a track, in a stable order
     // (clip order, then sequence order) shared by the analysis and the split.

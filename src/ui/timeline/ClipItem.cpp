@@ -286,7 +286,9 @@ void ClipItem::paint(QPainter* painter,
     };
     const QColor body = mix(trackColour, theme.trackBackground, selected ? 0.55 : 0.38);
     const QColor titleBar = selected ? trackColour.lighter(115) : trackColour.darker(105);
-    const QColor content = selected ? QColor(245, 247, 250) : trackColour.lighter(165);
+    const QColor content = theme.isLight
+        ? (selected ? trackColour.darker(230) : trackColour.darker(165))
+        : (selected ? QColor(245, 247, 250) : trackColour.lighter(165));
     const double radius = 3.0;
     const double titleH = r.height() >= 34.0 ? 14.0 : 0.0;
     const QRectF bodyRect = r.adjusted(0, titleH, 0, 0);
@@ -370,7 +372,7 @@ void ClipItem::paint(QPainter* painter,
     paintFadeOverlays(painter, r);
 
     painter->setRenderHint(QPainter::Antialiasing, true);
-    painter->setPen(selected ? QPen(QColor(255, 255, 255, 230), 1.5)
+    painter->setPen(selected ? QPen(theme.isLight ? theme.text : QColor(255, 255, 255, 230), 1.5)
                              : QPen(trackColour.darker(160), 1.0));
     painter->setBrush(Qt::NoBrush);
     painter->drawRoundedRect(r.adjusted(0.5, 0.5, -0.5, -0.5), radius, radius);
