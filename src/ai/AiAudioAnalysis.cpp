@@ -8,7 +8,10 @@ AiAudioAnalysis::AiAudioAnalysis(EditManager* editMgr)
     : editMgr_(editMgr)
 {
     if (editMgr_) {
-        QObject::connect(editMgr_, &EditManager::tracksChanged, [this]() {
+        // Item IDs restart in every Edit, so entries can't survive a New/Open.
+        aboutToChangeEditConn_ = QObject::connect(
+            editMgr_, &EditManager::aboutToChangeEdit, [this]() { detachAll(); });
+        tracksChangedConn_ = QObject::connect(editMgr_, &EditManager::tracksChanged, [this]() {
             if (!editMgr_) return;
             auto tracks = editMgr_->getAudioTracks();
             std::unordered_set<qulonglong> liveIds;
@@ -17,6 +20,7 @@ AiAudioAnalysis::AiAudioAnalysis(EditManager* editMgr)
 
             for (auto it = meterClients_.begin(); it != meterClients_.end();) {
                 if (liveIds.count(it->first) == 0) {
+                    detachEntry(it->second);
                     it = meterClients_.erase(it);
                 } else {
                     ++it;
@@ -28,11 +32,23 @@ AiAudioAnalysis::AiAudioAnalysis(EditManager* editMgr)
 
 AiAudioAnalysis::~AiAudioAnalysis()
 {
-    for (auto it = meterClients_.begin(); it != meterClients_.end(); ++it) {
-        auto& entry = it->second;
-        if (entry.plugin && entry.client)
-            entry.plugin->measurer.removeClient(*entry.client);
-    }
+    QObject::disconnect(tracksChangedConn_);
+    QObject::disconnect(aboutToChangeEditConn_);
+    detachAll();
+}
+
+void AiAudioAnalysis::detachEntry(MeterClientEntry& entry)
+{
+    if (entry.plugin && entry.client)
+        entry.plugin->measurer.removeClient(*entry.client);
+    entry.plugin = nullptr;
+}
+
+void AiAudioAnalysis::detachAll()
+{
+    for (auto& [id, entry] : meterClients_)
+        detachEntry(entry);
+    meterClients_.clear();
 }
 
 AiAudioAnalysis::MeterClientEntry* AiAudioAnalysis::ensureClient(te::AudioTrack* track)
@@ -49,9 +65,8 @@ AiAudioAnalysis::MeterClientEntry* AiAudioAnalysis::ensureClient(te::AudioTrack*
         entry.plugin = plugin;
         plugin->measurer.addClient(*entry.client);
         it = meterClients_.emplace(key, std::move(entry)).first;
-    } else if (it->second.plugin != plugin) {
-        if (it->second.plugin && it->second.client)
-            it->second.plugin->measurer.removeClient(*it->second.client);
+    } else if (it->second.plugin.get() != plugin) {
+        detachEntry(it->second);
         it->second.plugin = plugin;
         if (!it->second.client)
             it->second.client = std::make_unique<te::LevelMeasurer::Client>();

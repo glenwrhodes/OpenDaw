@@ -2,6 +2,7 @@
 #include "utils/ThemeManager.h"
 #include <QDir>
 #include <QStandardPaths>
+#include <QSignalBlocker>
 #include <QHeaderView>
 #include <QDrag>
 #include <QMimeData>
@@ -42,8 +43,11 @@ FileBrowserPanel::FileBrowserPanel(juce::AudioDeviceManager& deviceManager,
         QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation));
     locationCombo_->addItem("Home",
         QDir::homePath());
+    // Shown when the current folder isn't one of the quick locations.
+    locationCombo_->setPlaceholderText("Go to...");
 
-    connect(locationCombo_, qOverload<int>(&QComboBox::currentIndexChanged),
+    // activated (not currentIndexChanged) so picking the same entry again works.
+    connect(locationCombo_, qOverload<int>(&QComboBox::activated),
             this, [this](int idx) {
                 navigateTo(locationCombo_->itemData(idx).toString());
             });
@@ -233,6 +237,16 @@ void FileBrowserPanel::navigateTo(const QString& path)
     model_->setRootPath(path);
     treeView_->setRootIndex(model_->index(path));
     pathEdit_->setText(path);
+
+    int match = -1;
+    for (int i = 0; i < locationCombo_->count(); ++i) {
+        if (QDir(locationCombo_->itemData(i).toString()) == QDir(path)) {
+            match = i;
+            break;
+        }
+    }
+    QSignalBlocker block(locationCombo_);
+    locationCombo_->setCurrentIndex(match);
     QSettings().setValue("paths/lastBrowserDir", path);
 }
 

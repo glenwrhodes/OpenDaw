@@ -258,6 +258,21 @@ EffectChainWidget::EffectChainWidget(EditManager* editMgr, QWidget* parent)
         if (track_ || masterMode_) scheduleRebuild();
     });
 
+    // The slots hold raw plugin/parameter pointers into the Edit being replaced.
+    connect(editMgr_, &EditManager::aboutToChangeEdit, this, [this]() {
+        rebuildTimer_.stop();
+        if (track_) {
+            track_ = nullptr;
+            trackLabel_->setText("No track selected");
+        }
+        clearSlots();
+    });
+
+    connect(editMgr_, &EditManager::tracksChanged, this, [this]() {
+        if (track_ && !editMgr_->getAudioTracks().contains(track_))
+            setTrack(nullptr);
+    });
+
     connect(&automationPollTimer_, &QTimer::timeout, this, [this]() {
         if (!editMgr_ || !editMgr_->edit()) return;
         for (int i = 0; i < slotsLayout_->count(); ++i) {
@@ -305,15 +320,28 @@ void EffectChainWidget::scheduleRebuild()
         rebuildTimer_.start();
 }
 
+void EffectChainWidget::clearSlots()
+{
+    QLayoutItem* item;
+    while ((item = slotsLayout_->takeAt(0)) != nullptr) {
+        if (auto* w = item->widget()) {
+            // Still alive until deleteLater runs; keep it off EditManager signals.
+            QObject::disconnect(editMgr_, nullptr, w, nullptr);
+            w->hide();
+            w->deleteLater();
+        }
+        delete item;
+    }
+}
+
 void EffectChainWidget::rebuild()
 {
     rebuildTimer_.stop();
-    QLayoutItem* item;
-    while ((item = slotsLayout_->takeAt(0)) != nullptr) {
-        if (item->widget())
-            item->widget()->deleteLater();
-        delete item;
+    if (track_ && editMgr_ && !editMgr_->getAudioTracks().contains(track_)) {
+        track_ = nullptr;
+        trackLabel_->setText("No track selected");
     }
+    clearSlots();
 
     auto* plist = targetPluginList();
     if (!plist) {
@@ -401,8 +429,11 @@ void EffectChainWidget::removeEffect(te::Plugin* plugin)
 {
     if (!targetPluginList() || !plugin) return;
     plugin->setEnabled(false);
-    QTimer::singleShot(50, this, [this, plugin]() {
-        plugin->deleteFromParent();
+    if (auto* ext = dynamic_cast<te::ExternalPlugin*>(plugin))
+        PluginEditorWindow::closeForPlugin(*ext);
+    QTimer::singleShot(50, this, [this, keep = te::Plugin::Ptr(plugin)]() {
+        if (!keep->getOwnerList()) return;   // already removed (undo, AI, project change)
+        keep->deleteFromParent();
         rebuild();
         if (editMgr_) emit editMgr_->editChanged();
     });

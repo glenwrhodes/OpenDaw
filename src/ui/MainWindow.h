@@ -9,6 +9,8 @@
 #include "ui/routing/RoutingView.h"
 #include "ai/AiChatWidget.h"
 #include "ai/AiQuickPrompt.h"
+#include "ai/AiHandSplitter.h"
+#include <QProgressDialog>
 #include <QMainWindow>
 #include <QDockWidget>
 #include <QMenuBar>
@@ -48,6 +50,15 @@ protected:
 
 private:
     bool maybeSaveBeforeAction();
+    void addRecentProject(const QString& path);
+    void rebuildRecentMenu();
+    void openRecentProject(const QString& path);
+    void onImportAudio();
+    void onImportMidi();
+    void restoreWindowLayout();
+    void saveWindowLayout();
+    void fixDockTabBars();
+    void dropStaleEditorClips();
     void updateWindowTitle();
     void updateStatusBar();
     void createMenus();
@@ -70,6 +81,9 @@ private:
     void onInstrumentSelectRequested(te::AudioTrack* track);
     void onMidiClipDoubleClicked(te::MidiClip* clip);
     void onAudioClipDoubleClicked(te::WaveAudioClip* clip);
+    void onSplitPianoHands(te::AudioTrack* track);
+    void onHandSplitFinished(const QVector<bool>& isLeftHand, int fallbackNotes);
+    void closeHandSplitProgress();
 
     OpenDawApplication& app_;
     EditManager& editMgr_;
@@ -85,6 +99,9 @@ private:
     SheetMusicView*    sheetMusicView_ = nullptr;
     AiChatWidget*      aiChatWidget_  = nullptr;
     AiQuickPrompt*     aiQuickPrompt_ = nullptr;
+    AiHandSplitter*    handSplitter_ = nullptr;
+    QMenu*             recentMenu_ = nullptr;
+    QProgressDialog*   handSplitProgress_ = nullptr;
     VideoPlayerWidget* videoPlayer_   = nullptr;
 
     QDockWidget* mixerDock_           = nullptr;

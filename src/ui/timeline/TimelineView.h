@@ -61,7 +61,7 @@ private:
 struct TrackLayoutInfo {
     int trackIndex = 0;
     double yOffset = 0.0;
-    double clipRowHeight = 120.0;
+    double clipRowHeight = 96.0;
     bool automationVisible = false;
     bool collapsed = false;
     double automationLaneHeight = 80.0;
@@ -97,6 +97,7 @@ public:
 signals:
     void snapModeChanged(SnapMode mode);
     void instrumentSelectRequested(te::AudioTrack* track);
+    void splitHandsRequested(te::AudioTrack* track);
     void trackSelected(te::AudioTrack* track);
     void selectedClipsDeleted();
 
@@ -114,6 +115,9 @@ public slots:
     void clearTrackSelection();
     void toggleMarkerTempoLane();
     void toggleVideoLane();
+    bool isMarkerTempoLaneVisible() const;
+    bool isVideoLaneVisible() const;
+    void selectAllClips();
     VideoTrackLane* videoLane() const { return videoLane_; }
 
 private:
@@ -151,7 +155,7 @@ private:
     TimelineScene*  scene_;
 
     double pixelsPerBeat_ = 40.0;
-    double trackHeight_   = 120.0;
+    double trackHeight_   = 96.0;
     GridSnapper snapper_;
 
     QGraphicsLineItem* playheadLine_ = nullptr;
@@ -245,8 +249,8 @@ private:
     double laneResizeStartHeight_ = 0.0;
     double laneResizeStartY_ = 0.0;
 
-    static constexpr int HEADER_WIDTH = 140;
-    static constexpr double kCollapsedTrackHeight = 76.0;
+    static constexpr int HEADER_WIDTH = metrics::kTrackHeaderWidth;
+    static constexpr double kCollapsedTrackHeight = 30.0;
     static constexpr double kMinLaneHeight = 50.0;
     static constexpr double kMaxLaneHeight = 120.0;
     static constexpr double kDefaultLaneHeight = 80.0;

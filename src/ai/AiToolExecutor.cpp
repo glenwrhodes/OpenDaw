@@ -20,7 +20,7 @@ te::AudioTrack* AiToolExecutor::resolveTrack(const QJsonValue& trackRef) const
     if (!editMgr_ || !editMgr_->edit()) return nullptr;
 
     if (trackRef.isDouble()) {
-        int idx = trackRef.toInt();
+        int idx = trackRef.toInt(-1);   // -1 (no match) for fractional/out-of-range, not track 0
         auto* track = editMgr_->getAudioTrack(idx);
         if (!track)
             qWarning() << "[resolveTrack] no track at index" << idx;
@@ -75,7 +75,7 @@ te::Plugin* AiToolExecutor::resolveEffect(te::AudioTrack* track, const QJsonValu
     if (plugins.isEmpty()) return nullptr;
 
     if (effectRef.isDouble()) {
-        int idx = effectRef.toInt();
+        int idx = effectRef.toInt(-1);
         if (idx >= 0 && idx < plugins.size())
             return plugins[idx];
         return nullptr;
@@ -96,7 +96,7 @@ te::AutomatableParameter* AiToolExecutor::resolveParameter(te::Plugin* plugin, c
     auto params = plugin->getAutomatableParameters();
 
     if (paramRef.isDouble()) {
-        int idx = paramRef.toInt();
+        int idx = paramRef.toInt(-1);
         if (idx >= 0 && idx < params.size())
             return params[idx];
         return nullptr;
@@ -1445,6 +1445,9 @@ AiToolResult AiToolExecutor::execute(const AiToolCall& call)
     auto it = handlers_.find(call.name);
     if (it == handlers_.end())
         return err(call.id, QString("Unknown tool '%1'.").arg(call.name));
+    // An export renders the Edit on a worker thread; changing it now could crash.
+    if (editMgr_ && editMgr_->isRenderInProgress())
+        return err(call.id, "A render/export is in progress. Try again when it finishes.");
     return it.value()(call.input, call.id);
 }
 

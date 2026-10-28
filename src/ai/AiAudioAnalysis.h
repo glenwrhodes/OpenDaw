@@ -26,8 +26,13 @@ public:
 private:
     struct MeterClientEntry {
         std::unique_ptr<te::LevelMeasurer::Client> client;
-        te::LevelMeterPlugin* plugin = nullptr;
+        juce::ReferenceCountedObjectPtr<te::LevelMeterPlugin> plugin;   // keeps the plugin alive until removeClient
     };
+
+    // The audio thread writes into each client until it is removed, so every
+    // erase must unregister first.
+    static void detachEntry(MeterClientEntry& entry);
+    void detachAll();
 
     MeterClientEntry* ensureClient(te::AudioTrack* track);
     std::pair<float, float> readTrackLevels(te::AudioTrack* track);
@@ -36,6 +41,8 @@ private:
 
     EditManager* editMgr_ = nullptr;
     std::unordered_map<qulonglong, MeterClientEntry> meterClients_;
+    QMetaObject::Connection tracksChangedConn_;
+    QMetaObject::Connection aboutToChangeEditConn_;
 };
 
 } // namespace OpenDaw

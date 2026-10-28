@@ -57,20 +57,53 @@ ChannelStrip::~ChannelStrip()
         levelMeterPlugin_->measurer.removeClient(meterClient_);
 }
 
+void ChannelStrip::detach()
+{
+    meterTimer_.stop();
+    if (levelMeterPlugin_) {
+        levelMeterPlugin_->measurer.removeClient(meterClient_);
+        levelMeterPlugin_ = nullptr;
+    }
+    track_ = nullptr;
+}
+
+QColor ChannelStrip::stripColour() const
+{
+    if (isMaster_ || !track_ || !editMgr_)
+        return QColor(150, 154, 162);
+    return editMgr_->getTrackColour(track_);
+}
+
 void ChannelStrip::paintEvent(QPaintEvent*)
 {
+    auto& theme = ThemeManager::instance().current();
     QPainter p(this);
-    p.setRenderHint(QPainter::SmoothPixmapTransform);
 
-    if (!stripBgPixmap_.isNull()) {
-        if (stripBgScaled_.size() != size())
-            stripBgScaled_ = stripBgPixmap_.scaled(
-                size(), Qt::IgnoreAspectRatio, Qt::SmoothTransformation);
-        p.drawPixmap(0, 0, stripBgScaled_);
-    } else {
-        auto& theme = ThemeManager::instance().current();
-        p.fillRect(rect(), theme.surface);
+    QLinearGradient bg(0, 0, 0, height());
+    const QColor base = selected_ ? theme.surfaceLight : theme.surface;
+    bg.setColorAt(0.0, base.lighter(108));
+    bg.setColorAt(1.0, base.darker(108));
+    p.fillRect(rect(), bg);
+
+    // Track colour band along the top, separator on the right.
+    p.fillRect(QRect(0, 0, width(), 4), stripColour());
+    p.fillRect(QRect(width() - 1, 0, 1, height()), theme.separator);
+    if (selected_) {
+        p.setPen(QPen(theme.accent, 2));
+        p.setBrush(Qt::NoBrush);
+        p.drawRect(QRectF(1, 1, width() - 3, height() - 2));
     }
+}
+
+void ChannelStrip::applyNameStyle()
+{
+    if (!nameLabel_) return;
+    const QColor c = stripColour();
+    const QColor bg = isMaster_ ? QColor(70, 72, 78) : c.darker(150);
+    nameLabel_->setStyleSheet(
+        QString("QLabel { color: %1; font-size: 11px; font-weight: bold; "
+                "background: %2; border-left: 3px solid %3; border-radius: 2px; padding: 3px; }")
+            .arg(QColor(240, 241, 244).name(), bg.name(), c.name()));
 }
 
 ChannelStrip* ChannelStrip::createMasterStrip(EditManager* editMgr,
@@ -92,11 +125,10 @@ void ChannelStrip::setupUI()
     setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Expanding);
     setAutoFillBackground(false);
 
-    stripBgPixmap_ = QPixmap(":/mixerStripBG.png");
 
     auto* layout = new QVBoxLayout(this);
     layout->setContentsMargins(5, 5, 5, 5);
-    layout->setSpacing(4);
+    layout->setSpacing(3);
 
     // ── Top section: input routing, name, instrument, pan ──
 
@@ -105,9 +137,9 @@ void ChannelStrip::setupUI()
     inputCombo_ = new QComboBox(this);
     inputCombo_->setAccessibleName("Input Source");
     inputCombo_->setToolTip("Select audio input source");
-    inputCombo_->setFixedHeight(22);
+    inputCombo_->setFixedHeight(19);
     inputCombo_->setStyleSheet(
-        QString("QComboBox { background: rgba(0,0,0,100); color: %1; border: 1px solid rgba(255,255,255,18); "
+        QString("QComboBox { background: #1d1e21; color: %1; border: 1px solid #3e4046; "
                 "border-radius: 3px; font-size: 9px; padding: 2px 3px; }"
                 "QComboBox:hover { border: 1px solid %2; }"
                 "QComboBox::drop-down { width: 14px; }"
@@ -123,9 +155,9 @@ void ChannelStrip::setupUI()
     outputCombo_ = new QComboBox(this);
     outputCombo_->setAccessibleName("Output Destination");
     outputCombo_->setToolTip("Select output destination");
-    outputCombo_->setFixedHeight(22);
+    outputCombo_->setFixedHeight(19);
     outputCombo_->setStyleSheet(
-        QString("QComboBox { background: rgba(0,0,0,100); color: %1; border: 1px solid rgba(255,255,255,18); "
+        QString("QComboBox { background: #1d1e21; color: %1; border: 1px solid #3e4046; "
                 "border-radius: 3px; font-size: 9px; padding: 2px 3px; }"
                 "QComboBox:hover { border: 1px solid %2; }"
                 "QComboBox::drop-down { width: 14px; }"
@@ -143,12 +175,10 @@ void ChannelStrip::setupUI()
     nameLabel_->setToolTip("Double-click to rename");
     if (track_)
         nameLabel_->setText(QString::fromStdString(track_->getName().toStdString()));
-    nameLabel_->setAlignment(Qt::AlignCenter);
-    QString nameBgColor = isMidi ? "rgba(60,95,145,160)" : "rgba(0,0,0,120)";
-    nameLabel_->setStyleSheet(
-        QString("QLabel { color: %1; font-size: 10px; font-weight: bold; "
-                "background: %2; border-radius: 3px; padding: 3px; }")
-            .arg(theme.text.name(), nameBgColor));
+    nameLabel_->setAlignment(Qt::AlignLeft | Qt::AlignVCenter);
+    nameLabel_->setMinimumWidth(10);
+    nameLabel_->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Fixed);
+    applyNameStyle();
     nameLabel_->installEventFilter(this);
     layout->addWidget(nameLabel_);
 
@@ -157,34 +187,40 @@ void ChannelStrip::setupUI()
         QString instrName = instrument
             ? QString::fromStdString(instrument->getName().toStdString())
             : "No Instrument";
+        auto* instrumentRow = new QHBoxLayout();
+        instrumentRow->setSpacing(2);
         instrumentBtn_ = new QPushButton(instrName, this);
         instrumentBtn_->setAccessibleName("Select Instrument");
-        instrumentBtn_->setFixedHeight(22);
+        instrumentBtn_->setToolTip(instrName + "\nClick to change the instrument");
+        instrumentBtn_->setFixedHeight(kInstrumentRowHeight);
+        instrumentBtn_->setMinimumWidth(10);
+        instrumentBtn_->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Fixed);
         instrumentBtn_->setStyleSheet(
-            QString("QPushButton { background: rgba(0,0,0,100); color: %1; "
-                    "border: 1px solid rgba(255,255,255,18); "
-                    "border-radius: 3px; font-size: 8px; padding: 1px 3px; }"
+            QString("QPushButton { background: #1d1e21; color: %1; "
+                    "border: 1px solid #3e4046; "
+                    "border-radius: 3px; font-size: 10px; padding: 0px 4px; text-align: left; }"
                     "QPushButton:hover { background: rgba(255,255,255,25); }")
                 .arg(theme.text.name()));
         connect(instrumentBtn_, &QPushButton::clicked, this, [this]() {
             emit instrumentSelectRequested(track_);
         });
-        layout->addWidget(instrumentBtn_);
+        instrumentRow->addWidget(instrumentBtn_, 1);
 
         midiChannelCombo_ = new QComboBox(this);
         midiChannelCombo_->setAccessibleName("MIDI Channel");
         midiChannelCombo_->setToolTip("MIDI output channel (1-16)");
-        midiChannelCombo_->setFixedHeight(20);
+        midiChannelCombo_->setFixedHeight(kInstrumentRowHeight);
+        midiChannelCombo_->setFixedWidth(34);
         for (int ch = 1; ch <= 16; ++ch)
-            midiChannelCombo_->addItem(QString("Ch %1").arg(ch), ch);
+            midiChannelCombo_->addItem(QString::number(ch), ch);
         midiChannelCombo_->setStyleSheet(
-            QString("QComboBox { background: rgba(0,0,0,100); color: %1; "
-                    "border: 1px solid rgba(255,255,255,18); "
-                    "border-radius: 3px; font-size: 8px; padding: 1px 2px; }"
+            QString("QComboBox { background: #1d1e21; color: %1; "
+                    "border: 1px solid #3e4046; "
+                    "border-radius: 3px; font-size: 10px; padding: 0px 2px; }"
                     "QComboBox:hover { border: 1px solid %2; }"
                     "QComboBox::drop-down { width: 12px; }"
                     "QComboBox QAbstractItemView { background: %3; color: %1; "
-                    "selection-background-color: %4; font-size: 8px; }")
+                    "selection-background-color: %4; font-size: 10px; }")
                 .arg(theme.text.name(), theme.accent.name(),
                      theme.surface.name(), theme.surfaceLight.name()));
 
@@ -199,7 +235,10 @@ void ChannelStrip::setupUI()
 
         connect(midiChannelCombo_, QOverload<int>::of(&QComboBox::currentIndexChanged),
                 this, &ChannelStrip::onMidiChannelChanged);
-        layout->addWidget(midiChannelCombo_);
+        instrumentRow->addWidget(midiChannelCombo_);
+        layout->addLayout(instrumentRow);
+    } else {
+        layout->addSpacing(kInstrumentRowHeight + layout->spacing());
     }
 
     panKnob_ = new RotaryKnob(this);
@@ -207,7 +246,7 @@ void ChannelStrip::setupUI()
     panKnob_->setRange(-1.0, 1.0);
     panKnob_->setValue(0.0);
     panKnob_->setLabel(QString());
-    panKnob_->setFixedSize(48, 48);
+    panKnob_->setFixedSize(34, 34);
     auto* panRow = new QHBoxLayout();
     panRow->addStretch();
     panRow->addWidget(panKnob_);
@@ -256,7 +295,7 @@ void ChannelStrip::setupUI()
     volumeLabel_->setStyleSheet(
         QString("QLabel { color: %1; font-size: 9px; "
                 "font-family: 'Consolas', 'Courier New', monospace; "
-                "background: rgba(0,0,0,140); border: 1px solid rgba(255,255,255,15); "
+                "background: #0d0e10; border: 1px solid #3e4046; "
                 "border-radius: 3px; padding: 1px 3px; }")
             .arg(theme.text.name()));
     volumeLabel_->installEventFilter(this);
@@ -266,8 +305,10 @@ void ChannelStrip::setupUI()
     connect(fader_, &VolumeFader::valueChanged, this, [this](double v) {
         updateVolumeLabel();
         if (isMaster_) {
+            // The fader is linear in dB (-60..+6), unlike Tracktion's slider position.
             if (editMgr_ && editMgr_->edit())
-                editMgr_->edit()->setMasterVolumeSliderPos(float(v));
+                if (auto masterVol = editMgr_->edit()->getMasterVolumePlugin())
+                    masterVol->setVolumeDb(v <= 0.001 ? -100.0f : float(-60.0 + v * 66.0));
             return;
         }
 
@@ -293,9 +334,8 @@ void ChannelStrip::setupUI()
     muteBtn_ = new QPushButton("M", this);
     muteBtn_->setAccessibleName("Mute");
     muteBtn_->setCheckable(true);
-    muteBtn_->setFixedHeight(22);
-    muteBtn_->setFont(icons::fontAudio(11));
-    muteBtn_->setText(QString(icons::fa::Mute));
+    muteBtn_->setFixedHeight(20);
+    muteBtn_->setText("M");
     muteBtn_->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
     applyToggleStyle(muteBtn_, theme.muteButton);
     connect(muteBtn_, &QPushButton::toggled, this, [this](bool m) {
@@ -305,9 +345,8 @@ void ChannelStrip::setupUI()
     soloBtn_ = new QPushButton(this);
     soloBtn_->setAccessibleName("Solo");
     soloBtn_->setCheckable(true);
-    soloBtn_->setFixedHeight(22);
-    soloBtn_->setFont(icons::fontAudio(11));
-    soloBtn_->setText(QString(icons::fa::Solo));
+    soloBtn_->setFixedHeight(20);
+    soloBtn_->setText("S");
     soloBtn_->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
     applyToggleStyle(soloBtn_, theme.soloButton);
     connect(soloBtn_, &QPushButton::toggled, this, [this](bool s) {
@@ -317,9 +356,8 @@ void ChannelStrip::setupUI()
     armBtn_ = new QPushButton(this);
     armBtn_->setAccessibleName("Record Arm");
     armBtn_->setCheckable(true);
-    armBtn_->setFixedHeight(22);
-    armBtn_->setFont(icons::fontAudio(11));
-    armBtn_->setText(QString(icons::fa::Armrecording));
+    armBtn_->setFixedHeight(20);
+    armBtn_->setText("R");
     armBtn_->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
     applyToggleStyle(armBtn_, theme.recordArm);
     connect(armBtn_, &QPushButton::toggled, this, &ChannelStrip::onArmToggled);
@@ -327,7 +365,7 @@ void ChannelStrip::setupUI()
     monoBtn_ = new QPushButton(this);
     monoBtn_->setAccessibleName("Mono Or Stereo");
     monoBtn_->setCheckable(true);
-    monoBtn_->setFixedHeight(22);
+    monoBtn_->setFixedHeight(20);
     monoBtn_->setFont(icons::fontAudio(11));
     monoBtn_->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
     applyToggleStyle(monoBtn_, theme.accent);
@@ -352,10 +390,10 @@ void ChannelStrip::setupUI()
                               "TOUCH - Record only while moving a control\n"
                               "LATCH - Record from first touch, hold last value\n"
                               "WRITE - Record all params from playback start");
-    autoModeBtn_->setFixedHeight(18);
+    autoModeBtn_->setFixedHeight(16);
     autoModeBtn_->setStyleSheet(
-        QString("QPushButton { background: rgba(0,0,0,100); color: %1; "
-                "border: 1px solid rgba(255,255,255,18); "
+        QString("QPushButton { background: #1d1e21; color: %1; "
+                "border: 1px solid #3e4046; "
                 "border-radius: 3px; font-size: 7px; font-weight: bold; padding: 0px 2px; }"
                 "QPushButton:hover { border: 1px solid %2; }")
             .arg(theme.textDim.name(), theme.accent.name()));
@@ -438,11 +476,13 @@ void ChannelStrip::setupMasterUI()
 {
     if (nameLabel_)
         nameLabel_->setText("Master");
+    applyNameStyle();
+    update();
 
     if (editMgr_ && editMgr_->edit()) {
         if (auto masterVol = editMgr_->edit()->getMasterVolumePlugin()) {
             if (fader_)
-                fader_->setValue(masterVol->getSliderPos());
+                fader_->setValue(dbToNormalized(masterVol->getVolumeDb()));
             if (panKnob_)
                 panKnob_->setValue(masterVol->getPan());
         }
@@ -477,7 +517,7 @@ void ChannelStrip::refresh()
             if (auto masterVol = editMgr_->edit()->getMasterVolumePlugin()) {
                 if (fader_) {
                     QSignalBlocker block(fader_);
-                    fader_->setValue(masterVol->getSliderPos());
+                    fader_->setValue(dbToNormalized(masterVol->getVolumeDb()));
                 }
                 if (panKnob_) {
                     QSignalBlocker block(panKnob_);
@@ -491,6 +531,8 @@ void ChannelStrip::refresh()
 
     if (!track_) return;
     nameLabel_->setText(QString::fromStdString(track_->getName().toStdString()));
+    applyNameStyle();
+    update();
     {
         QSignalBlocker block(muteBtn_);
         muteBtn_->setChecked(track_->isMuted(false));
@@ -583,7 +625,7 @@ void ChannelStrip::updateMeter()
             bool isWriting = isPlaying && (mode == te::AutomationMode::write);
             if (fader_ && !isWriting) {
                 QSignalBlocker block(fader_);
-                fader_->setValue(masterVol->getSliderPos());
+                fader_->setValue(dbToNormalized(masterVol->getVolumeDb()));
             }
             if (panKnob_ && !isWriting) {
                 QSignalBlocker block(panKnob_);
@@ -644,14 +686,13 @@ void ChannelStrip::applyToggleStyle(QPushButton* btn, const QColor& activeColor)
 {
     auto& theme = ThemeManager::instance().current();
     btn->setStyleSheet(
-        QString("QPushButton { background: rgba(0,0,0,100); color: %1; "
-                "border: 1px solid rgba(255,255,255,18); "
-                "border-radius: 4px; font-weight: bold; font-size: 10px; padding: 1px 2px; }"
-                "QPushButton:hover { background: rgba(255,255,255,25); "
-                "border-color: rgba(255,255,255,35); }"
-                "QPushButton:checked { background: %2; color: #000; border-color: %3; }")
+        QString("QPushButton { background: %4; color: %1; border: 1px solid %5; "
+                "border-radius: 3px; font-weight: bold; font-size: 11px; padding: 1px 2px; }"
+                "QPushButton:hover { background: %6; color: %7; }"
+                "QPushButton:checked { background: %2; color: #111; border-color: %3; }")
             .arg(theme.textDim.name(), activeColor.name(),
-                 activeColor.darker(130).name()));
+                 activeColor.darker(130).name(), theme.background.name(),
+                 theme.border.name(), theme.surfaceLight.name(), theme.text.name()));
 }
 
 void ChannelStrip::updateMonoButtonVisual(bool mono)
@@ -706,7 +747,7 @@ void ChannelStrip::updateAutoModeButton()
     QColor bgAlpha(bg.red(), bg.green(), bg.blue(), 180);
     autoModeBtn_->setStyleSheet(
         QString("QPushButton { background: rgba(%1,%2,%3,%4); color: %5; "
-                "border: 1px solid rgba(255,255,255,18); "
+                "border: 1px solid #3e4046; "
                 "border-radius: 3px; font-size: 7px; font-weight: bold; padding: 0px 2px; }"
                 "QPushButton:hover { border: 1px solid %6; }")
             .arg(bg.red()).arg(bg.green()).arg(bg.blue()).arg(180)
@@ -941,19 +982,7 @@ void ChannelStrip::startRenameEdit()
 
 void ChannelStrip::updateSelectionStyle()
 {
-    auto& theme = ThemeManager::instance().current();
-    if (selected_) {
-        setStyleSheet(
-            QString("background: transparent; "
-                    "border-left: 3px solid %1; "
-                    "border-top: 1px solid rgba(255,255,255,25); "
-                    "border-right: 1px solid rgba(255,255,255,25); "
-                    "border-bottom: 1px solid rgba(255,255,255,25); "
-                    "border-radius: 4px;")
-                .arg(theme.accent.name()));
-    } else {
-        setStyleSheet("background: transparent; border: none;");
-    }
+    update();
 }
 
 } // namespace OpenDaw

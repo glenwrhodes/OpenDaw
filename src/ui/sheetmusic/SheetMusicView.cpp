@@ -128,6 +128,9 @@ bool SheetMusicView::eventFilter(QObject* obj, QEvent* event)
                 }
                 for (auto* n : toRemove)
                     if (n) seq.removeNote(*n, um);
+                // The piano roll may hold items for the notes just freed.
+                if (editMgr_)
+                    emit editMgr_->midiClipModified(clip_);
                 QTimer::singleShot(0, this, [this]() { rebuildScore(); });
             }
             return true;

@@ -369,8 +369,9 @@ TimelineView::TimelineView(EditManager* editMgr, QWidget* parent)
 
     // Loop region overlay on the scene (behind playhead, in front of clips)
     {
+        // Faint: the ruler already marks the loop; the lanes only need a hint.
         QColor loopColor = theme.accent;
-        loopColor.setAlpha(25);
+        loopColor.setAlpha(10);
         loopOverlayItem_ = scene_->addRect(0, 0, 0, 0, Qt::NoPen, loopColor);
         loopOverlayItem_->setZValue(90);
         loopOverlayItem_->setVisible(false);
@@ -620,7 +621,7 @@ void TimelineView::setPixelsPerBeat(double ppb)
 
 void TimelineView::setTrackHeight(double h)
 {
-    double minH = 80.0;
+    double minH = 48.0;
     for (int i = 0; i < static_cast<int>(trackHeaders_.size()); ++i) {
         if (i < static_cast<int>(layout_.size()) && layout_[i].collapsed) continue;
         minH = std::max(minH, double(trackHeaders_[i]->minimumSizeHint().height()));
@@ -725,6 +726,11 @@ bool TimelineView::eventFilter(QObject* watched, QEvent* event)
             }
             if (keyEvent->key() == Qt::Key_O && !(keyEvent->modifiers() & Qt::ControlModifier)) {
                 setLoopOutAtPlayhead();
+                keyEvent->accept();
+                return true;
+            }
+            if (keyEvent->key() == Qt::Key_A && (keyEvent->modifiers() & Qt::ControlModifier)) {
+                selectAllClips();
                 keyEvent->accept();
                 return true;
             }
@@ -872,8 +878,10 @@ void TimelineView::rebuildTrackHeaders()
                     this, &TimelineView::onFolderDragStarted);
             connect(fh, &FolderHeaderWidget::dragMoved,
                     this, &TimelineView::onFolderDragMoved);
+            // Queued: finishing the drag rebuilds (deletes) the header that is
+            // still inside its grip handle's mouse-release event filter.
             connect(fh, &FolderHeaderWidget::dragFinished,
-                    this, &TimelineView::onFolderDragFinished);
+                    this, &TimelineView::onFolderDragFinished, Qt::QueuedConnection);
             headerVLayout_->addWidget(fh);
             folderHeaders_.push_back(fh);
 
@@ -896,6 +904,9 @@ void TimelineView::rebuildTrackHeaders()
         auto* header = new TrackHeaderWidget(track, editMgr_, headerContainer_);
         connect(header, &TrackHeaderWidget::instrumentSelectRequested,
                 this, &TimelineView::instrumentSelectRequested);
+        // Queued: the split rebuilds (deletes) this header once it is applied.
+        connect(header, &TrackHeaderWidget::splitHandsRequested,
+                this, &TimelineView::splitHandsRequested, Qt::QueuedConnection);
         connect(header, &TrackHeaderWidget::trackSelected,
                 this, &TimelineView::selectTrack);
         connect(header, &TrackHeaderWidget::automationToggled,
@@ -907,7 +918,7 @@ void TimelineView::rebuildTrackHeaders()
         connect(header, &TrackHeaderWidget::dragMoved,
                 this, &TimelineView::onTrackDragMoved);
         connect(header, &TrackHeaderWidget::dragFinished,
-                this, &TimelineView::onTrackDragFinished);
+                this, &TimelineView::onTrackDragFinished, Qt::QueuedConnection);
         header->setSelected(track == selectedTrack_);
 
         if (item.parentFolderId > 0)
@@ -999,6 +1010,22 @@ void TimelineView::toggleVideoLane()
     if (videoRow_) {
         videoRow_->setVisible(!videoRow_->isVisible());
     }
+}
+
+bool TimelineView::isMarkerTempoLaneVisible() const
+{
+    return markerTempoRow_ && !markerTempoRow_->isHidden();
+}
+
+bool TimelineView::isVideoLaneVisible() const
+{
+    return videoRow_ && !videoRow_->isHidden();
+}
+
+void TimelineView::selectAllClips()
+{
+    for (auto* item : clipItems_)
+        item->setSelected(true);
 }
 
 void TimelineView::onTrackDragStarted(TrackHeaderWidget* header)
@@ -1456,6 +1483,12 @@ void TimelineView::rebuildAutomationLanes(double sceneWidth)
 
         auto* track = tracks[i];
         auto* param = layout_[i].shownParam;
+        // The chosen parameter dies with its plugin (effect removed, instrument
+        // replaced); fall back to volume rather than painting a freed curve.
+        if (param && !editMgr_->getAutomatableParamsForTrack(track).contains(param)) {
+            param = nullptr;
+            layout_[i].shownParam = nullptr;
+        }
         if (!param) param = editMgr_->getVolumeParam(track);
         if (!param) continue;
 

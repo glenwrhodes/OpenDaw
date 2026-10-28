@@ -1,8 +1,10 @@
 #pragma once
 
 #include "AudioEngine.h"
+#include <atomic>
 #include <tracktion_engine/tracktion_engine.h>
 #include <QObject>
+#include <QColor>
 #include <QString>
 #include <QList>
 #include <QVector>
@@ -76,6 +78,25 @@ public:
 
     void trimNotesToClipBounds(te::MidiClip& clip);
     bool isClipValid(te::Clip* clip) const;
+    void removeClip(te::Clip* clip);
+
+    // Track colours (headers, clips, mixer). Tracks without one get a palette colour.
+    QColor getTrackColour(te::Track* track) const;
+    void setTrackColour(te::Track& track, const QColor& colour);
+
+    // Piano hand split. Notes of every MIDI clip on a track, in a stable order
+    // (clip order, then sequence order) shared by the analysis and the split.
+    struct TrackNoteRef {
+        te::MidiClip* clip = nullptr;
+        te::MidiNote* note = nullptr;
+    };
+    std::vector<TrackNoteRef> getTrackMidiNotes(te::AudioTrack* track) const;
+    // Duplicates `track` just below itself (same instrument, effects and mix),
+    // then keeps the right-hand notes on the original and the left-hand notes on
+    // the copy. isLeftHand is indexed like getTrackMidiNotes(). One undo step.
+    // Returns the left-hand track, or nullptr if the notes no longer match.
+    te::AudioTrack* splitTrackByHands(te::AudioTrack& track,
+                                      const std::vector<bool>& isLeftHand);
 
     QList<InputSource> getAvailableInputSources() const;
     QList<InputSource> getAvailableMidiInputSources() const;
@@ -223,6 +244,7 @@ private:
     void teardownCurrentEdit();
     void createDefaultEdit();
     void ensureLevelMetersOnAllTracks();
+    void assignMissingTrackColours();
     void enableAllWaveInputDevices();
     void clearTrackInputInternal(te::AudioTrack& track);
 
@@ -241,7 +263,7 @@ private:
     juce::File currentFile_;
     std::unordered_set<uint64_t> midiTrackIds_;
     std::map<std::string, QString> inputDisplayNames_;
-    bool renderInProgress_ = false;
+    std::atomic<bool> renderInProgress_ { false };   // set from the export worker thread
     bool hasUnsavedChanges_ = false;
     bool engineSuspended_ = false;
     QTimer autosaveTimer_;

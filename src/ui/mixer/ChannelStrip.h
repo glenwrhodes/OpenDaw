@@ -31,6 +31,8 @@ public:
 
     te::AudioTrack* track() const { return track_; }
     void refresh();
+    // Called before deleteLater(): stop touching the (possibly deleted) track.
+    void detach();
     void setSelected(bool selected);
     bool isSelected() const { return selected_; }
 
@@ -42,6 +44,9 @@ signals:
     void instrumentSelectRequested(te::AudioTrack* track);
 
 private:
+    static constexpr int kInstrumentRowHeight = 19;
+    QColor stripColour() const;
+    void applyNameStyle();
     void setupUI();
     void setupMasterUI();
     void updateMeter();
@@ -87,8 +92,6 @@ private:
     te::LevelMeterPlugin* levelMeterPlugin_ = nullptr;
     double lastTrackedPlayheadSecs_ = -1.0;
 
-    QPixmap stripBgPixmap_;
-    QPixmap stripBgScaled_;
 };
 
 } // namespace OpenDaw

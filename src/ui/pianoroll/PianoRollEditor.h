@@ -32,6 +32,8 @@ public:
     void setClip(te::MidiClip* clip, EditManager* editMgr = nullptr);
     void refresh();
     te::MidiClip* clip() const { return clip_; }
+    bool isShowingClip(te::MidiClip* clip) const;
+    void dropStaleClips();
 
 signals:
     void notesChanged();

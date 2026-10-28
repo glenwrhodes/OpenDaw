@@ -248,8 +248,16 @@ ExportSettings ExportDialog::settings() const
     return s;
 }
 
+void ExportDialog::reject()
+{
+    if (!exporting_)
+        QDialog::reject();
+}
+
 void ExportDialog::setExporting(bool exporting)
 {
+    exporting_ = exporting;
+    cancelBtn_->setEnabled(!exporting);
     exportBtn_->setEnabled(!exporting);
     browseBtn_->setEnabled(!exporting);
     formatCombo_->setEnabled(!exporting);

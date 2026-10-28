@@ -35,6 +35,15 @@ public:
 
     QString model() const;
     void setModel(const QString& model);
+    static QString defaultModel();
+    static QStringList suggestedModels();
+
+    // For one-shot requests made outside the chat (e.g. AiHandSplitter).
+    static QString configuredModel();
+    static bool supportsStructuredOutputs(const QString& model);
+    // Adds thinking/effort/fallback options for `model`; returns the anthropic-beta header value.
+    static QByteArray applyModelOptions(QJsonObject& body, const QString& model,
+                                        const QString& effort, bool allowFallback);
 
     bool confirmDestructive() const;
     void setConfirmDestructive(bool confirm);
@@ -60,6 +69,7 @@ public slots:
 
 private:
     void sendToApi();
+    void abortCurrentReply();
     void handleStreamChunk();
     void handleStreamFinished();
     void processAssistantResponse();
@@ -85,6 +95,8 @@ private:
     QString currentToolInputStr_;
     bool inToolInput_ = false;
     int currentBlockIndex_ = -1;
+    QString currentStopReason_;
+    QString currentRefusalCategory_;
 
     bool busy_ = false;
 

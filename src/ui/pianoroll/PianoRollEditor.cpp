@@ -666,8 +666,33 @@ te::MidiClip* PianoRollEditor::ensureClipForActiveChannel()
     return newClip;
 }
 
+void PianoRollEditor::dropStaleClips()
+{
+    if (!clip_ || !editMgr_) return;
+    if (!editMgr_->isClipValid(clip_)) {
+        setClip(nullptr, nullptr);
+        return;
+    }
+    // A linked channel clip can vanish on its own (undo, timeline delete).
+    for (auto* c : linkedClips_) {
+        if (!editMgr_->isClipValid(c)) {
+            gatherLinkedClips();
+            passClipsToChildren();
+            rebuildChannelPanel();
+            return;
+        }
+    }
+}
+
+bool PianoRollEditor::isShowingClip(te::MidiClip* clip) const
+{
+    return clip && std::find(linkedClips_.begin(), linkedClips_.end(), clip)
+                       != linkedClips_.end();
+}
+
 void PianoRollEditor::refresh()
 {
+    dropStaleClips();
     if (!clip_) return;
     noteGrid_->rebuildNotes();
     velocityLane_->setPixelsPerBeat(noteGrid_->pixelsPerBeat());
@@ -871,7 +896,12 @@ void PianoRollEditor::rebuildChannelPanel()
 
     QLayoutItem* child;
     while ((child = channelPanelLayout_->takeAt(0)) != nullptr) {
-        delete child->widget();
+        // deleteLater: this rebuild is often triggered from a row's own click
+        // handler or event filter, so the row must outlive the current event.
+        if (auto* w = child->widget()) {
+            w->hide();
+            w->deleteLater();
+        }
         delete child;
     }
 

@@ -5,6 +5,7 @@
 #include <QVBoxLayout>
 #include <QHBoxLayout>
 #include <QMouseEvent>
+#include <QContextMenuEvent>
 #include <QMenu>
 #include <QSignalBlocker>
 #include <QApplication>
@@ -30,93 +31,199 @@ TrackHeaderWidget::TrackHeaderWidget(te::AudioTrack* track, EditManager* editMgr
 {
     setAccessibleName("Track Header");
     setObjectName("trackHeaderWidget");
-    setAttribute(Qt::WA_StyledBackground, true);
     auto& theme = ThemeManager::instance().current();
 
-    setFixedWidth(140);
-    setAutoFillBackground(true);
-    QPalette pal;
-    pal.setColor(QPalette::Window, theme.surface);
-    setPalette(pal);
+    setFixedWidth(metrics::kTrackHeaderWidth);
+    trackColour_ = editMgr_->getTrackColour(track_);
 
-    auto* mainLayout = new QVBoxLayout(this);
-    mainLayout->setContentsMargins(5, 4, 5, 4);
-    mainLayout->setSpacing(3);
+    // Background, colour strip and separators are painted in paintEvent; the
+    // row containers stay transparent so nothing here cascades into the buttons.
+    auto* outer = new QHBoxLayout(this);
+    outer->setContentsMargins(kLeftMargin, kVMargin, 4, kVMargin);
+    outer->setSpacing(5);
 
-    collapseBtn_ = new QPushButton(this);
+    auto* column = new QVBoxLayout();
+    column->setContentsMargins(0, 0, 0, 0);
+    column->setSpacing(kRowSpacing);
+    outer->addLayout(column, 1);
+
+    auto makeRow = [this](int height) {
+        auto* row = new QWidget(this);
+        row->setAttribute(Qt::WA_TranslucentBackground);
+        row->setStyleSheet("background: transparent;");
+        row->setFixedHeight(height);
+        auto* l = new QHBoxLayout(row);
+        l->setContentsMargins(0, 0, 0, 0);
+        l->setSpacing(3);
+        return std::make_pair(row, l);
+    };
+
+    const QString smallComboStyle =
+        QString("QComboBox { background: %1; color: %2; border: 1px solid %3; "
+                "border-radius: 3px; font-size: 10px; padding: 0px 4px; }"
+                "QComboBox:hover { border-color: %4; }"
+                "QComboBox::drop-down { width: 12px; border: none; }"
+                "QComboBox QAbstractItemView { background: %5; color: %2; "
+                "selection-background-color: %4; font-size: 10px; }")
+            .arg(theme.background.name(), theme.text.name(), theme.border.name(),
+                 theme.accent.name(), theme.surface.name());
+
+    // ── Row 1: collapse, grip, name, type ──
+    auto [nameRow, nameLayout] = makeRow(kNameRowHeight);
+    nameRow_ = nameRow;
+
+    collapseBtn_ = new QPushButton(nameRow);
     collapseBtn_->setAccessibleName("Collapse Track");
     collapseBtn_->setToolTip("Collapse track");
-    collapseBtn_->setFixedSize(14, 20);
+    collapseBtn_->setFixedSize(14, kNameRowHeight);
     collapseBtn_->setText(QString::fromUtf8("\xe2\x96\xbe"));
     collapseBtn_->setStyleSheet(
         QString("QPushButton { background: transparent; color: %1; border: none; "
-                "font-size: 10px; padding: 0; }"
+                "font-size: 11px; padding: 0; }"
                 "QPushButton:hover { color: %2; }")
             .arg(theme.textDim.name(), theme.text.name()));
     connect(collapseBtn_, &QPushButton::clicked, this, [this]() {
         setCollapsed(!collapsed_);
         emit collapseToggled(track_, collapsed_);
     });
+    nameLayout->addWidget(collapseBtn_);
 
-    gripHandle_ = new QWidget(this);
-    gripHandle_->setFixedSize(12, 20);
+    gripHandle_ = new QWidget(nameRow);
+    gripHandle_->setFixedSize(9, kNameRowHeight);
     gripHandle_->setCursor(Qt::OpenHandCursor);
     gripHandle_->setToolTip("Drag to reorder track");
     gripHandle_->setAccessibleName("Track Reorder Grip");
     gripHandle_->installEventFilter(this);
+    nameLayout->addWidget(gripHandle_);
 
-    bool isMidi = editMgr_->isMidiTrack(track_);
-
-    auto* topRow = new QHBoxLayout();
-    topRow->setSpacing(3);
-    topRow->addWidget(collapseBtn_);
-    topRow->addWidget(gripHandle_);
-
-    nameLabel_ = new QLabel(
-        QString::fromStdString(track_->getName().toStdString()), this);
+    nameLabel_ = new QLabel(QString::fromStdString(track_->getName().toStdString()), nameRow);
     nameLabel_->setAccessibleName("Track Name");
-    nameLabel_->setToolTip("Double-click to rename");
-    nameLabel_->setAlignment(Qt::AlignCenter);
-    nameLabel_->setStyleSheet(
-        QString("QLabel { color: %1; font-size: 10px; font-weight: bold; "
-                "background: %2; border-radius: 2px; padding: 2px; }")
-            .arg(theme.text.name(), theme.background.name()));
+    nameLabel_->setToolTip(nameLabel_->text() + "\nDouble-click to rename");
+    nameLabel_->setAlignment(Qt::AlignLeft | Qt::AlignVCenter);
+    nameLabel_->setMinimumWidth(20);
+    nameLabel_->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
     nameLabel_->installEventFilter(this);
-    topRow->addWidget(nameLabel_, 1);
+    nameLayout->addWidget(nameLabel_, 1);
 
-    bool isBus = editMgr_->isBusTrack(track_);
-    QString typeText = isMidi ? "MIDI" : (isBus ? "BUS" : "AUDIO");
-    auto* typeBadge = new QLabel(typeText, this);
-    typeBadge->setAccessibleName("Track Type");
-    typeBadge->setAlignment(Qt::AlignCenter);
-    QColor badgeBg = isMidi ? QColor(theme.midiClipBody.red(), theme.midiClipBody.green(),
-                                     theme.midiClipBody.blue())
-                            : (isBus ? QColor(255, 152, 0) : theme.accent);
-    typeBadge->setStyleSheet(
-        QString("QLabel { color: #fff; font-size: 7px; font-weight: bold; "
-                "background: %1; border-radius: 6px; padding: 1px 5px; }")
-            .arg(badgeBg.name()));
-    typeBadge->setFixedHeight(14);
-    topRow->addWidget(typeBadge);
+    const bool isMidi = editMgr_->isMidiTrack(track_);
+    const bool isBus = editMgr_->isBusTrack(track_);
+    typeLabel_ = new QLabel(isMidi ? "MIDI" : (isBus ? "BUS" : "AUDIO"), nameRow);
+    typeLabel_->setAccessibleName("Track Type");
+    typeLabel_->setAlignment(Qt::AlignCenter);
+    typeLabel_->setStyleSheet(
+        QString("QLabel { color: %1; font-size: 9px; font-weight: bold; "
+                "border: 1px solid %2; border-radius: 3px; padding: 0px 4px; }")
+            .arg(theme.textDim.name(), theme.border.name()));
+    nameLayout->addWidget(typeLabel_);
+    column->addWidget(nameRow);
 
-    mainLayout->addLayout(topRow);
+    // ── Row 2: record, solo, mute | mono, freeze, automation ──
+    auto [buttonRow, buttonLayout] = makeRow(kButtonRowHeight);
+    buttonRow_ = buttonRow;
 
+    auto makeToggle = [&](const QString& text, const QString& name, const QString& tip,
+                          const QColor& activeColour, const QFont* font = nullptr) {
+        auto* btn = new QPushButton(text, buttonRow);
+        btn->setAccessibleName(name);
+        btn->setToolTip(tip);
+        btn->setCheckable(true);
+        btn->setFixedSize(24, kButtonRowHeight);
+        if (font) btn->setFont(*font);
+        applyToggleStyle(btn, activeColour);
+        buttonLayout->addWidget(btn);
+        return btn;
+    };
+
+    armBtn_ = makeToggle("R", "Record Arm", "Record enable", theme.recordArm);
+    connect(armBtn_, &QPushButton::toggled, this, &TrackHeaderWidget::onArmToggled);
+
+    soloBtn_ = makeToggle("S", "Solo", "Solo", theme.soloButton);
+    connect(soloBtn_, &QPushButton::toggled, this, [this](bool s) {
+        if (track_) track_->setSolo(s);
+    });
+
+    muteBtn_ = makeToggle("M", "Mute", "Mute", theme.muteButton);
+    connect(muteBtn_, &QPushButton::toggled, this, [this](bool m) {
+        if (track_) track_->setMute(m);
+    });
+
+    buttonLayout->addSpacing(6);
+
+    const QFont audioIconFont = icons::fontAudio(12);
+    monoBtn_ = makeToggle(QString(), "Mono Or Stereo", QString(), theme.accent, &audioIconFont);
+    connect(monoBtn_, &QPushButton::toggled, this, [this](bool mono) {
+        if (!track_ || !editMgr_) return;
+        updateMonoButtonVisual(mono);
+        // setTrackMono emits tracksChanged, which deletes and rebuilds this
+        // header, so nothing may touch `this` after it.
+        editMgr_->setTrackMono(*track_, mono);
+    });
+
+    const QFont materialFont = icons::materialIcons(13);
+    freezeBtn_ = makeToggle(QString(icons::mi::AcUnit), "Freeze Track",
+                            "Freeze track (render effects to audio)", QColor(70, 170, 220),
+                            &materialFont);
+    freezeBtn_->setCheckable(false);
+    connect(freezeBtn_, &QPushButton::clicked, this, [this]() {
+        if (!track_ || !editMgr_) return;
+        if (editMgr_->isRenderInProgress()) return;
+        QApplication::setOverrideCursor(Qt::WaitCursor);
+        bool frozen = editMgr_->isTrackFrozen(track_);
+        if (frozen)
+            editMgr_->unfreezeTrack(*track_);
+        else
+            editMgr_->freezeTrack(*track_);
+        QApplication::restoreOverrideCursor();
+    });
+
+    automationBtn_ = makeToggle(QString(icons::mi::ShowChart), "Toggle Automation Lane",
+                                "Show automation lane (A)", theme.accent, &materialFont);
+    connect(automationBtn_, &QPushButton::toggled, this, [this](bool checked) {
+        automationVisible_ = checked;
+        emit automationToggled(track_, checked);
+    });
+    buttonLayout->addStretch();
+    column->addWidget(buttonRow);
+
+    const bool mono = editMgr_ && editMgr_->isTrackMono(track_);
+    {
+        QSignalBlocker block(monoBtn_);
+        monoBtn_->setChecked(mono);
+    }
+    updateMonoButtonVisual(mono);
+
+    connect(editMgr_, &EditManager::tracksChanged, this, [this]() {
+        if (!track_ || !monoBtn_ || !editMgr_)
+            return;
+        const bool isMono = editMgr_->isTrackMono(track_);
+        QSignalBlocker block(monoBtn_);
+        monoBtn_->setChecked(isMono);
+        updateMonoButtonVisual(isMono);
+    });
+
+    connect(editMgr_, &EditManager::trackFreezeStateChanged, this, [this](te::AudioTrack* t) {
+        if (t != track_ || !freezeBtn_ || !editMgr_) return;
+        updateFreezeButtonVisual(editMgr_->isTrackFrozen(track_));
+    });
+
+    // ── Optional rows, shown as the track gets taller (in this order) ──
     if (isMidi) {
+        auto [instrumentRow, instrumentLayout] = makeRow(kDetailRowHeight);
         auto* instrument = editMgr_->getTrackInstrument(track_);
         QString instrName = instrument
             ? QString::fromStdString(instrument->getName().toStdString())
             : "No Instrument";
-        instrumentBtn_ = new QPushButton(instrName, this);
+        instrumentBtn_ = new QPushButton(instrName, instrumentRow);
         instrumentBtn_->setAccessibleName("Instrument");
-        instrumentBtn_->setToolTip("Click to open VST UI, right-click to change instrument");
-        instrumentBtn_->setFixedHeight(18);
+        instrumentBtn_->setToolTip("Click to open the instrument, right-click to change it");
+        instrumentBtn_->setFixedHeight(kDetailRowHeight);
         instrumentBtn_->setContextMenuPolicy(Qt::CustomContextMenu);
         instrumentBtn_->setStyleSheet(
             QString("QPushButton { background: %1; color: %2; border: 1px solid %3; "
-                    "border-radius: 2px; font-size: 8px; padding: 1px 3px; }"
-                    "QPushButton:hover { background: %4; }")
-                .arg(theme.background.name(), theme.text.name(),
-                     theme.border.name(), theme.surfaceLight.name()));
+                    "border-radius: 3px; font-size: 10px; padding: 0px 6px; text-align: left; }"
+                    "QPushButton:hover { background: %4; border-color: %5; }")
+                .arg(theme.background.name(), theme.text.name(), theme.border.name(),
+                     theme.surfaceLight.name(), theme.accent.name()));
 
         connect(instrumentBtn_, &QPushButton::clicked, this, [this]() {
             auto* instr = editMgr_->getTrackInstrument(track_);
@@ -143,176 +250,28 @@ TrackHeaderWidget::TrackHeaderWidget(te::AudioTrack* track, EditManager* editMgr
                     menu.exec(instrumentBtn_->mapToGlobal(pos));
                 });
 
-        mainLayout->addWidget(instrumentBtn_);
+        instrumentLayout->addWidget(instrumentBtn_, 1);
+        column->addWidget(instrumentRow);
+        optionalRows_.push_back(instrumentRow);
     }
 
-    inputCombo_ = new QComboBox(this);
-    inputCombo_->setAccessibleName("Input Source");
-    inputCombo_->setToolTip("Select audio input source");
-    inputCombo_->setFixedHeight(20);
-    inputCombo_->setStyleSheet(
-        QString("QComboBox { background: %1; color: %2; border: 1px solid %3; "
-                "border-radius: 3px; font-size: 9px; padding: 1px 3px; }"
-                "QComboBox:hover { border: 1px solid %4; }"
-                "QComboBox::drop-down { width: 14px; }"
-                "QComboBox QAbstractItemView { background: %1; color: %2; "
-                "selection-background-color: %5; font-size: 9px; }")
-            .arg(theme.background.name(), theme.text.name(),
-                 theme.border.name(), theme.accent.name(),
-                 theme.surfaceLight.name()));
-    populateInputCombo();
-    connect(inputCombo_, QOverload<int>::of(&QComboBox::currentIndexChanged),
-            this, &TrackHeaderWidget::onInputComboChanged);
-    mainLayout->addWidget(inputCombo_);
+    auto [mixRow, mixLayout] = makeRow(kDetailRowHeight);
+    const QString sliderStyle =
+        QString("QSlider { background: transparent; }"
+                "QSlider::groove:horizontal { background: %1; height: 4px; border-radius: 2px; }"
+                "QSlider::handle:horizontal { background: %2; width: 9px; margin: -5px 0; "
+                "border-radius: 3px; border: 1px solid %1; }"
+                "QSlider::handle:horizontal:hover { background: %4; }"
+                "QSlider::sub-page:horizontal { background: %3; border-radius: 2px; }")
+            .arg(theme.separator.name(), QColor(196, 199, 205).name(),
+                 "%SUBPAGE%", QColor(230, 232, 236).name());
 
-    outputCombo_ = new QComboBox(this);
-    outputCombo_->setAccessibleName("Output Destination");
-    outputCombo_->setToolTip("Select output destination");
-    outputCombo_->setFixedHeight(20);
-    outputCombo_->setStyleSheet(
-        QString("QComboBox { background: %1; color: %2; border: 1px solid %3; "
-                "border-radius: 3px; font-size: 9px; padding: 1px 3px; }"
-                "QComboBox:hover { border: 1px solid %4; }"
-                "QComboBox::drop-down { width: 14px; }"
-                "QComboBox QAbstractItemView { background: %1; color: %2; "
-                "selection-background-color: %5; font-size: 9px; }")
-            .arg(theme.background.name(), theme.text.name(),
-                 theme.border.name(), theme.accent.name(),
-                 theme.surfaceLight.name()));
-    populateOutputCombo();
-    connect(outputCombo_, QOverload<int>::of(&QComboBox::currentIndexChanged),
-            this, &TrackHeaderWidget::onOutputComboChanged);
-    mainLayout->addWidget(outputCombo_);
-
-    auto* btnRow = new QHBoxLayout();
-    btnRow->setSpacing(3);
-
-    muteBtn_ = new QPushButton(this);
-    muteBtn_->setAccessibleName("Mute");
-    muteBtn_->setCheckable(true);
-    muteBtn_->setFixedSize(24, 20);
-    muteBtn_->setFont(icons::fontAudio(11));
-    muteBtn_->setText(QString(icons::fa::Mute));
-    applyToggleStyle(muteBtn_, theme.muteButton);
-    connect(muteBtn_, &QPushButton::toggled, this, [this](bool m) {
-        if (track_) track_->setMute(m);
-    });
-
-    soloBtn_ = new QPushButton(this);
-    soloBtn_->setAccessibleName("Solo");
-    soloBtn_->setCheckable(true);
-    soloBtn_->setFixedSize(24, 20);
-    soloBtn_->setFont(icons::fontAudio(11));
-    soloBtn_->setText(QString(icons::fa::Solo));
-    applyToggleStyle(soloBtn_, theme.soloButton);
-    connect(soloBtn_, &QPushButton::toggled, this, [this](bool s) {
-        if (track_) track_->setSolo(s);
-    });
-
-    armBtn_ = new QPushButton(this);
-    armBtn_->setAccessibleName("Record Arm");
-    armBtn_->setCheckable(true);
-    armBtn_->setFixedSize(24, 20);
-    armBtn_->setFont(icons::fontAudio(11));
-    armBtn_->setText(QString(icons::fa::Armrecording));
-    applyToggleStyle(armBtn_, theme.recordArm);
-    connect(armBtn_, &QPushButton::toggled, this, &TrackHeaderWidget::onArmToggled);
-
-    monoBtn_ = new QPushButton(this);
-    monoBtn_->setAccessibleName("Mono Or Stereo");
-    monoBtn_->setCheckable(true);
-    monoBtn_->setFixedSize(24, 20);
-    monoBtn_->setFont(icons::fontAudio(11));
-    applyToggleStyle(monoBtn_, theme.accent);
-    connect(monoBtn_, &QPushButton::toggled, this, [this](bool mono) {
-        if (!track_ || !editMgr_) return;
-        editMgr_->setTrackMono(*track_, mono);
-        updateMonoButtonVisual(mono);
-    });
-
-    freezeBtn_ = new QPushButton(this);
-    freezeBtn_->setAccessibleName("Freeze Track");
-    freezeBtn_->setCheckable(false);
-    freezeBtn_->setFixedSize(24, 20);
-    freezeBtn_->setText("F");
-    applyToggleStyle(freezeBtn_, QColor(0, 150, 200));
-    connect(freezeBtn_, &QPushButton::clicked, this, [this]() {
-        if (!track_ || !editMgr_) return;
-        if (editMgr_->isRenderInProgress()) return;
-        QApplication::setOverrideCursor(Qt::WaitCursor);
-        bool frozen = editMgr_->isTrackFrozen(track_);
-        if (frozen)
-            editMgr_->unfreezeTrack(*track_);
-        else
-            editMgr_->freezeTrack(*track_);
-        QApplication::restoreOverrideCursor();
-    });
-
-    btnRow->addWidget(muteBtn_);
-    btnRow->addWidget(soloBtn_);
-    btnRow->addWidget(armBtn_);
-    btnRow->addWidget(monoBtn_);
-    btnRow->addWidget(freezeBtn_);
-    btnRow->addStretch();
-    mainLayout->addLayout(btnRow);
-
-    const bool mono = editMgr_ && editMgr_->isTrackMono(track_);
-    {
-        QSignalBlocker block(monoBtn_);
-        monoBtn_->setChecked(mono);
-    }
-    updateMonoButtonVisual(mono);
-
-    if (editMgr_ && track_) {
-        updateFreezeButtonVisual(editMgr_->isTrackFrozen(track_));
-    }
-
-    connect(editMgr_, &EditManager::tracksChanged, this, [this]() {
-        if (!track_ || !monoBtn_ || !editMgr_)
-            return;
-        const bool isMono = editMgr_->isTrackMono(track_);
-        QSignalBlocker block(monoBtn_);
-        monoBtn_->setChecked(isMono);
-        updateMonoButtonVisual(isMono);
-    });
-
-    connect(editMgr_, &EditManager::trackFreezeStateChanged, this, [this](te::AudioTrack* t) {
-        if (t != track_ || !freezeBtn_ || !editMgr_) return;
-        updateFreezeButtonVisual(editMgr_->isTrackFrozen(track_));
-    });
-
-    auto* controlRow = new QHBoxLayout();
-    controlRow->setSpacing(2);
-
-    panKnob_ = new RotaryKnob(this);
-    panKnob_->setAccessibleName("Pan");
-    panKnob_->setRange(-1.0, 1.0);
-    panKnob_->setValue(0.0);
-    panKnob_->setLabel(QString());
-    panKnob_->setFixedSize(36, 40);
-    connect(panKnob_, &RotaryKnob::valueChanged, this, [this](double v) {
-        if (!track_) return;
-        for (auto* plugin : track_->pluginList.getPlugins()) {
-            if (auto* volPan = dynamic_cast<te::VolumeAndPanPlugin*>(plugin)) {
-                volPan->panParam->setParameter(float(v), juce::sendNotification);
-                break;
-            }
-        }
-    });
-    controlRow->addWidget(panKnob_);
-
-    volumeSlider_ = new QSlider(Qt::Horizontal, this);
+    volumeSlider_ = new QSlider(Qt::Horizontal, mixRow);
     volumeSlider_->setAccessibleName("Volume");
+    volumeSlider_->setToolTip("Volume");
     volumeSlider_->setRange(0, 100);
-    volumeSlider_->setValue(75);
-    volumeSlider_->setFixedHeight(18);
-    volumeSlider_->setStyleSheet(
-        QString("QSlider::groove:horizontal { background: %1; height: 4px; border-radius: 2px; }"
-                "QSlider::handle:horizontal { background: %2; width: 12px; margin: -5px 0; "
-                "border-radius: 6px; border: 1px solid %3; }"
-                "QSlider::sub-page:horizontal { background: %4; border-radius: 2px; }")
-            .arg(QColor(22, 22, 28).name(), QColor(72, 76, 84).name(),
-                 QColor(40, 42, 48).name(), theme.accent.name()));
+    volumeSlider_->setValue(91);
+    volumeSlider_->setStyleSheet(QString(sliderStyle).replace("%SUBPAGE%", theme.accent.name()));
     connect(volumeSlider_, &QSlider::valueChanged, this, [this](int v) {
         if (!track_) return;
         for (auto* plugin : track_->pluginList.getPlugins()) {
@@ -326,47 +285,73 @@ TrackHeaderWidget::TrackHeaderWidget(te::AudioTrack* track, EditManager* editMgr
             }
         }
     });
-    controlRow->addWidget(volumeSlider_, 1);
+    mixLayout->addWidget(volumeSlider_, 1);
+    mixLayout->addSpacing(4);
 
+    // Pan: a short slider with no fill, so the centre reads as "nothing set".
+    panKnob_ = new QSlider(Qt::Horizontal, mixRow);
+    panKnob_->setAccessibleName("Pan");
+    panKnob_->setToolTip("Pan (double-click to centre)");
+    panKnob_->setRange(-100, 100);
+    panKnob_->setValue(0);
+    panKnob_->setFixedWidth(46);
+    panKnob_->setStyleSheet(QString(sliderStyle).replace("%SUBPAGE%", theme.separator.name()));
+    panKnob_->installEventFilter(this);
+    connect(panKnob_, &QSlider::valueChanged, this, [this](int v) {
+        if (!track_) return;
+        panKnob_->setToolTip(v == 0 ? QString("Pan: centre")
+                                    : QString("Pan: %1 %2").arg(std::abs(v)).arg(v < 0 ? "L" : "R"));
+        for (auto* plugin : track_->pluginList.getPlugins()) {
+            if (auto* volPan = dynamic_cast<te::VolumeAndPanPlugin*>(plugin)) {
+                volPan->panParam->setParameter(float(v / 100.0), juce::sendNotification);
+                break;
+            }
+        }
+    });
+    mixLayout->addWidget(panKnob_);
+    column->addWidget(mixRow);
+    optionalRows_.push_back(mixRow);
+
+    auto [ioRow, ioLayout] = makeRow(kDetailRowHeight);
+    inputCombo_ = new QComboBox(ioRow);
+    inputCombo_->setAccessibleName("Input Source");
+    inputCombo_->setToolTip("Input");
+    inputCombo_->setFixedHeight(kDetailRowHeight);
+    inputCombo_->setMinimumWidth(10);
+    inputCombo_->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Fixed);
+    inputCombo_->setStyleSheet(smallComboStyle);
+    populateInputCombo();
+    connect(inputCombo_, QOverload<int>::of(&QComboBox::currentIndexChanged),
+            this, &TrackHeaderWidget::onInputComboChanged);
+    ioLayout->addWidget(inputCombo_, 1);
+
+    outputCombo_ = new QComboBox(ioRow);
+    outputCombo_->setAccessibleName("Output Destination");
+    outputCombo_->setToolTip("Output");
+    outputCombo_->setFixedHeight(kDetailRowHeight);
+    outputCombo_->setMinimumWidth(10);
+    outputCombo_->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Fixed);
+    outputCombo_->setStyleSheet(smallComboStyle);
+    populateOutputCombo();
+    connect(outputCombo_, QOverload<int>::of(&QComboBox::currentIndexChanged),
+            this, &TrackHeaderWidget::onOutputComboChanged);
+    ioLayout->addWidget(outputCombo_, 1);
+    column->addWidget(ioRow);
+    optionalRows_.push_back(ioRow);
+
+    column->addStretch();
+
+    // Full-height meter on the right edge.
     meter_ = new LevelMeter(this);
     meter_->setAccessibleName("Track Level Meter");
-    meter_->setFixedWidth(12);
-    controlRow->addWidget(meter_);
+    meter_->setFixedWidth(7);
+    meter_->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Expanding);
+    outer->addWidget(meter_);
 
-    mainLayout->addLayout(controlRow);
-    mainLayout->addStretch();
-
-    automationBtn_ = new QPushButton(this);
-    automationBtn_->setAccessibleName("Toggle Automation Lane");
-    automationBtn_->setToolTip("Show/Hide Automation (A)");
-    automationBtn_->setCheckable(true);
-    automationBtn_->setFixedHeight(16);
-    automationBtn_->setText(QString::fromUtf8("\xe2\x96\xb6") + " Auto");
-    automationBtn_->setStyleSheet(
-        QString("QPushButton { background: %1; color: %2; border: 1px solid %3; "
-                "border-radius: 2px; font-size: 8px; padding: 0px 4px; text-align: left; }"
-                "QPushButton:checked { background: %4; color: #fff; }"
-                "QPushButton:hover { border: 1px solid %5; }")
-            .arg(theme.surface.name(), theme.textDim.name(),
-                 theme.border.name(), theme.accent.darker(150).name(),
-                 theme.accent.name()));
-    connect(automationBtn_, &QPushButton::toggled, this, [this](bool checked) {
-        automationVisible_ = checked;
-        automationBtn_->setText(checked
-            ? (QString::fromUtf8("\xe2\x96\xbc") + " Auto")
-            : (QString::fromUtf8("\xe2\x96\xb6") + " Auto"));
-        emit automationToggled(track_, checked);
-    });
-    mainLayout->addWidget(automationBtn_);
-
-    rowSeparator_ = new QFrame(this);
-    rowSeparator_->setAccessibleName("Track Row Separator");
-    rowSeparator_->setFrameShape(QFrame::NoFrame);
-    rowSeparator_->setFixedHeight(1);
-    rowSeparator_->setStyleSheet(
-        QString("background: %1;")
-            .arg(theme.border.lighter(145).name()));
-    mainLayout->addWidget(rowSeparator_);
+    refreshNameStyle();
+    if (editMgr_ && track_)
+        updateFreezeButtonVisual(editMgr_->isTrackFrozen(track_));
+    updateRowVisibility();
 
     levelMeterPlugin_ = track_->getLevelMeterPlugin();
     if (levelMeterPlugin_)
@@ -387,12 +372,12 @@ void TrackHeaderWidget::refresh()
 {
     if (!track_) return;
     nameLabel_->setText(QString::fromStdString(track_->getName().toStdString()));
+    nameLabel_->setToolTip(nameLabel_->text() + "\nDouble-click to rename");
 
-    bool anyTrackSoloed = false;
-    if (editMgr_ && editMgr_->edit()) {
-        for (auto* t : te::getAudioTracks(*editMgr_->edit())) {
-            if (t->isSolo(false)) { anyTrackSoloed = true; break; }
-        }
+    const QColor colour = editMgr_ ? editMgr_->getTrackColour(track_) : trackColour_;
+    if (colour != trackColour_) {
+        trackColour_ = colour;
+        update();
     }
 
     {
@@ -406,14 +391,8 @@ void TrackHeaderWidget::refresh()
 
     bool soloOverridesMute = track_->isSolo(false) && track_->isMuted(false);
     muteBtn_->setEnabled(!soloOverridesMute);
-    if (soloOverridesMute)
-        muteBtn_->setToolTip("Mute overridden by Solo");
-    else
-        muteBtn_->setToolTip("Mute");
+    muteBtn_->setToolTip(soloOverridesMute ? "Mute overridden by Solo" : "Mute");
 
-    if (anyTrackSoloed && !track_->isSolo(false)) {
-        nameLabel_->setStyleSheet(nameLabel_->styleSheet() + " QLabel { opacity: 0.5; }");
-    }
     if (editMgr_ && armBtn_) {
         QSignalBlocker block(armBtn_);
         armBtn_->setChecked(editMgr_->isTrackRecordEnabled(track_));
@@ -431,15 +410,40 @@ void TrackHeaderWidget::refresh()
                 float dbVal = te::volumeFaderPositionToDB(vp->volParam->getCurrentValue());
                 double norm = (dbVal + 60.0) / 66.0;
                 QSignalBlocker block(volumeSlider_);
-                volumeSlider_->setValue(static_cast<int>(norm * 100.0));
+                volumeSlider_->setValue(static_cast<int>(std::clamp(norm, 0.0, 1.0) * 100.0));
             }
             if (panKnob_) {
                 QSignalBlocker block(panKnob_);
-                panKnob_->setValue(vp->pan.get());
+                panKnob_->setValue(int(std::lround(vp->pan.get() * 100.0)));
             }
             break;
         }
     }
+
+    refreshNameStyle();
+}
+
+void TrackHeaderWidget::refreshNameStyle()
+{
+    auto& theme = ThemeManager::instance().current();
+
+    // Dim tracks that are silenced by another track's solo.
+    bool silencedBySolo = false;
+    if (editMgr_ && editMgr_->edit() && track_ && !track_->isSolo(false)) {
+        for (auto* t : te::getAudioTracks(*editMgr_->edit()))
+            if (t->isSolo(false)) { silencedBySolo = true; break; }
+    }
+    const bool frozen = editMgr_ && track_ && editMgr_->isTrackFrozen(track_);
+
+    QColor colour = theme.text;
+    if (frozen)
+        colour = QColor(120, 190, 230);
+    else if (silencedBySolo || (track_ && track_->isMuted(false)))
+        colour = theme.textDim;
+
+    nameLabel_->setStyleSheet(
+        QString("QLabel { color: %1; font-size: 11px; font-weight: bold; background: transparent; }")
+            .arg(colour.name()));
 }
 
 void TrackHeaderWidget::setAutomationVisible(bool visible)
@@ -448,9 +452,6 @@ void TrackHeaderWidget::setAutomationVisible(bool visible)
     QSignalBlocker block(automationBtn_);
     automationBtn_->setChecked(visible);
     automationVisible_ = visible;
-    automationBtn_->setText(visible
-        ? (QString::fromUtf8("\xe2\x96\xbc") + " Auto")
-        : (QString::fromUtf8("\xe2\x96\xb6") + " Auto"));
 }
 
 void TrackHeaderWidget::setCollapsed(bool collapsed)
@@ -464,32 +465,51 @@ void TrackHeaderWidget::setCollapsed(bool collapsed)
             : QString::fromUtf8("\xe2\x96\xbe"));
         collapseBtn_->setToolTip(collapsed ? "Expand track" : "Collapse track");
     }
-
-    if (inputCombo_) inputCombo_->setVisible(!collapsed);
-    if (outputCombo_) outputCombo_->setVisible(!collapsed);
-    if (automationBtn_) automationBtn_->setVisible(!collapsed);
-    if (instrumentBtn_) instrumentBtn_->setVisible(!collapsed);
-    if (freezeBtn_) freezeBtn_->setVisible(!collapsed);
+    updateRowVisibility();
 }
 
 void TrackHeaderWidget::setIndented(bool indented)
 {
-    auto* mainLay = layout();
-    if (mainLay)
-        mainLay->setContentsMargins(indented ? 15 : 5, 4, 5, 4);
+    indented_ = indented;
+    if (auto* l = layout())
+        l->setContentsMargins(kLeftMargin + (indented ? 10 : 0), kVMargin, 4, kVMargin);
+    update();
 }
 
 void TrackHeaderWidget::setTrackHeight(int h)
 {
-    int minH = minimumSizeHint().height();
-    setFixedHeight(std::max(h, minH));
+    setFixedHeight(std::max(h, minimumSizeHint().height()));
+    updateRowVisibility();
+}
+
+void TrackHeaderWidget::updateRowVisibility()
+{
+    if (buttonRow_)
+        buttonRow_->setVisible(!collapsed_);
+
+    // Reveal the optional rows in order while they fit.
+    int available = height() - 2 * kVMargin - kNameRowHeight
+                    - (collapsed_ ? 0 : kRowSpacing + kButtonRowHeight);
+    for (auto* row : optionalRows_) {
+        const bool fits = !collapsed_ && available >= kRowSpacing + kDetailRowHeight;
+        row->setVisible(fits);
+        if (fits)
+            available -= kRowSpacing + kDetailRowHeight;
+    }
+}
+
+void TrackHeaderWidget::resizeEvent(QResizeEvent* event)
+{
+    QWidget::resizeEvent(event);
+    updateRowVisibility();
 }
 
 QSize TrackHeaderWidget::minimumSizeHint() const
 {
-    if (auto* l = layout())
-        return QSize(width(), l->minimumSize().height());
-    return QWidget::minimumSizeHint();
+    int h = 2 * kVMargin + kNameRowHeight;
+    if (!collapsed_)
+        h += kRowSpacing + kButtonRowHeight;
+    return QSize(metrics::kTrackHeaderWidth, h);
 }
 
 void TrackHeaderWidget::setSelected(bool sel)
@@ -501,36 +521,73 @@ void TrackHeaderWidget::setSelected(bool sel)
 
 void TrackHeaderWidget::updateSelectionStyle()
 {
+    update();
+}
+
+void TrackHeaderWidget::paintEvent(QPaintEvent*)
+{
     auto& theme = ThemeManager::instance().current();
+    QPainter p(this);
+
+    const bool frozen = editMgr_ && track_ && editMgr_->isTrackFrozen(track_);
+    QColor bg = selected_ ? theme.surfaceLight : theme.surface;
+    if (frozen)
+        bg = QColor(bg.red() - 4, bg.green() + 2, bg.blue() + 8);
+    p.fillRect(rect(), bg);
+
+    // Colour strip (indented tracks sit inside a folder, so shift it in).
+    const int stripX = indented_ ? 10 : 0;
+    QColor strip = trackColour_;
+    if (track_ && track_->isMuted(false))
+        strip = strip.darker(170);
+    p.fillRect(QRect(stripX, 0, metrics::kTrackColourStrip, height()), strip);
+
     if (selected_) {
-        QColor selBg(theme.surface.red() + 8, theme.surface.green() + 10,
-                     theme.surface.blue() + 12);
-        setStyleSheet(QString(
-            "background: %1; "
-            "border-left: 3px solid %2; "
-            "border-top: 1px solid %3; "
-            "border-right: 1px solid %3; "
-            "border-bottom: 0px solid transparent;")
-                .arg(selBg.name(), theme.accent.name(),
-                     theme.border.lighter(120).name()));
-    } else {
-        setStyleSheet(QString(
-            "background: %1; "
-            "border-left: 1px solid transparent; "
-            "border-top: 1px solid transparent; "
-            "border-right: 1px solid transparent; "
-            "border-bottom: 0px solid transparent;")
-                .arg(theme.surface.name()));
-        QPalette pal;
-        pal.setColor(QPalette::Window, theme.surface);
-        setPalette(pal);
+        p.fillRect(QRect(stripX + metrics::kTrackColourStrip, 0, 2, height()),
+                   theme.accent);
     }
+
+    p.fillRect(QRect(0, height() - 1, width(), 1), theme.separator);
+    p.fillRect(QRect(width() - 1, 0, 1, height()), theme.separator);
 }
 
 void TrackHeaderWidget::mousePressEvent(QMouseEvent* event)
 {
     emit trackSelected(track_);
     QWidget::mousePressEvent(event);
+}
+
+void TrackHeaderWidget::contextMenuEvent(QContextMenuEvent* event)
+{
+    if (!track_ || !editMgr_) return;
+
+    QMenu menu(this);
+    menu.setAccessibleName("Track Context Menu");
+
+    menu.addAction("Rename...", this, [this]() { startRenameEdit(); });
+    auto* colourMenu = menu.addMenu("Track Colour");
+    colourMenu->setAccessibleName("Track Colour");
+    for (const QColor& c : ThemeManager::trackPalette()) {
+        QPixmap swatch(14, 14);
+        swatch.fill(c);
+        auto* mgr = editMgr_;
+        const auto trackId = track_->itemID;
+        // Queued: the colour change rebuilds the headers, including this one.
+        colourMenu->addAction(QIcon(swatch), QString(), mgr, [mgr, trackId, c]() {
+            QTimer::singleShot(0, mgr, [mgr, trackId, c]() {
+                for (auto* t : mgr->getAudioTracks())
+                    if (t->itemID == trackId) { mgr->setTrackColour(*t, c); break; }
+            });
+        });
+    }
+    menu.addSeparator();
+
+    auto* split = menu.addAction("Split Piano Hands (AI)...", this, [this]() {
+        emit splitHandsRequested(track_);
+    });
+    split->setToolTip("Use AI to split a piano recording into right-hand and left-hand tracks");
+    split->setEnabled(editMgr_->isMidiTrack(track_) && !editMgr_->isTrackFrozen(track_));
+    menu.exec(event->globalPos());
 }
 
 void TrackHeaderWidget::mouseMoveEvent(QMouseEvent* event)
@@ -545,6 +602,11 @@ void TrackHeaderWidget::mouseReleaseEvent(QMouseEvent* event)
 
 bool TrackHeaderWidget::eventFilter(QObject* obj, QEvent* event)
 {
+    if (obj == panKnob_ && event->type() == QEvent::MouseButtonDblClick) {
+        panKnob_->setValue(0);
+        return true;
+    }
+
     if (obj == nameLabel_ && event->type() == QEvent::MouseButtonDblClick && track_) {
         startRenameEdit();
         return true;
@@ -584,7 +646,7 @@ bool TrackHeaderWidget::eventFilter(QObject* obj, QEvent* event)
         if (event->type() == QEvent::Paint) {
             QPainter p(gripHandle_);
             p.setRenderHint(QPainter::Antialiasing);
-            QColor dotColor(160, 164, 170);
+            QColor dotColor = ThemeManager::instance().current().textDim;
             int dotR = 1;
             int cols = 2, rows = 3;
             int spacingX = 4, spacingY = 5;
@@ -615,11 +677,13 @@ void TrackHeaderWidget::startRenameEdit()
     edit->setAccessibleName("Rename Track");
     edit->setText(QString::fromStdString(track_->getName().toStdString()));
     edit->selectAll();
-    edit->setGeometry(nameLabel_->geometry());
-    edit->setAlignment(Qt::AlignCenter);
+    edit->setGeometry(QRect(nameLabel_->mapTo(this, QPoint(0, 0)), nameLabel_->size()));
+    edit->setAlignment(Qt::AlignLeft | Qt::AlignVCenter);
+    auto& theme = ThemeManager::instance().current();
     edit->setStyleSheet(
-        "QLineEdit { background: #222; color: #eee; border: 1px solid #888; "
-        "font-size: 10px; font-weight: bold; padding: 1px 2px; border-radius: 2px; }");
+        QString("QLineEdit { background: %1; color: %2; border: 1px solid %3; "
+                "font-size: 11px; font-weight: bold; padding: 0px 3px; border-radius: 3px; }")
+            .arg(theme.background.name(), theme.text.name(), theme.accent.name()));
     edit->show();
     edit->setFocus();
     nameLabel_->hide();
@@ -675,7 +739,7 @@ void TrackHeaderWidget::updateMeter()
             }
             if (panKnob_ && !isWriting) {
                 QSignalBlocker block(panKnob_);
-                panKnob_->setValue(vp->panParam->getCurrentValue());
+                panKnob_->setValue(int(std::lround(vp->panParam->getCurrentValue() * 100.0)));
             }
             break;
         }
@@ -687,13 +751,14 @@ void TrackHeaderWidget::applyToggleStyle(QPushButton* btn, const QColor& activeC
     auto& theme = ThemeManager::instance().current();
     btn->setStyleSheet(
         QString("QPushButton { background: %1; color: %2; border: 1px solid %3; "
-                "border-radius: 4px; font-weight: bold; font-size: 9px; padding: 0px 2px; }"
-                "QPushButton:hover { background: %5; }"
-                "QPushButton:checked { background: %4; color: #000; border-color: %6; }")
-            .arg(theme.surface.name(), theme.textDim.name(),
+                "border-radius: 3px; font-weight: bold; font-size: 10px; padding: 0px; }"
+                "QPushButton:hover { background: %5; color: %7; }"
+                "QPushButton:checked { background: %4; color: #111; border-color: %6; }"
+                "QPushButton:disabled { color: %3; }")
+            .arg(theme.background.name(), theme.textDim.name(),
                  theme.border.name(), activeColor.name(),
                  theme.surfaceLight.name(),
-                 activeColor.darker(130).name()));
+                 activeColor.darker(130).name(), theme.text.name()));
 }
 
 void TrackHeaderWidget::updateMonoButtonVisual(bool mono)
@@ -709,48 +774,20 @@ void TrackHeaderWidget::updateFreezeButtonVisual(bool frozen)
 {
     if (!freezeBtn_) return;
 
-    auto& theme = ThemeManager::instance().current();
-    QColor freezeColor(0, 150, 200);
-
+    const QColor freezeColor(70, 170, 220);
     if (frozen) {
-        freezeBtn_->setToolTip("Unfreeze Track (click to restore live processing)");
+        freezeBtn_->setToolTip("Unfreeze track (restore live processing)");
         freezeBtn_->setStyleSheet(
-            QString("QPushButton { background: %1; color: #fff; font-size: 9px; "
-                    "font-weight: bold; border: 1px solid %1; border-radius: 3px; }"
+            QString("QPushButton { background: %1; color: #111; border: 1px solid %1; "
+                    "border-radius: 3px; padding: 0px; }"
                     "QPushButton:hover { background: %2; }")
-                .arg(freezeColor.name(), freezeColor.lighter(130).name()));
-
-        QColor frozenBg = theme.surface;
-        frozenBg = frozenBg.darker(110);
-        QPalette pal = palette();
-        pal.setColor(QPalette::Window, frozenBg);
-        setPalette(pal);
-
-        if (nameLabel_) {
-            nameLabel_->setStyleSheet(
-                QString("QLabel { color: %1; font-size: 10px; font-weight: bold; "
-                        "background: %2; border: 1px solid %3; "
-                        "border-radius: 2px; padding: 2px; }")
-                    .arg(freezeColor.name(), theme.background.name(),
-                         freezeColor.name()));
-        }
+                .arg(freezeColor.name(), freezeColor.lighter(120).name()));
     } else {
-        freezeBtn_->setToolTip("Freeze Track (render effects to audio)");
+        freezeBtn_->setToolTip("Freeze track (render effects to audio)");
         applyToggleStyle(freezeBtn_, freezeColor);
-
-        QPalette pal = palette();
-        pal.setColor(QPalette::Window, theme.surface);
-        setPalette(pal);
-
-        bool isMidi = editMgr_ && editMgr_->isMidiTrack(track_);
-        if (nameLabel_) {
-            QColor nameBg = isMidi ? theme.midiClipBody : theme.background;
-            nameLabel_->setStyleSheet(
-                QString("QLabel { color: %1; font-size: 10px; font-weight: bold; "
-                        "background: %2; border-radius: 2px; padding: 2px; }")
-                    .arg(theme.text.name(), nameBg.name()));
-        }
     }
+    refreshNameStyle();
+    update();
 }
 
 void TrackHeaderWidget::populateInputCombo()

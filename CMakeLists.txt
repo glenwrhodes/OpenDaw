@@ -134,6 +134,7 @@ set(OpenDaw_SOURCES
     src/ai/AiChatStore.h           src/ai/AiChatStore.cpp
     src/ai/AiChatWidget.h          src/ai/AiChatWidget.cpp
     src/ai/AiQuickPrompt.h         src/ai/AiQuickPrompt.cpp
+    src/ai/AiHandSplitter.h        src/ai/AiHandSplitter.cpp
     src/utils/FFmpegUtils.h        src/utils/FFmpegUtils.cpp
     src/video/VideoThumbnailCache.h src/video/VideoThumbnailCache.cpp
     src/ui/timeline/VideoTrackLane.h src/ui/timeline/VideoTrackLane.cpp

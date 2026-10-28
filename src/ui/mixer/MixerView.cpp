@@ -100,8 +100,16 @@ MixerView::MixerView(EditManager* editMgr, QWidget* parent)
 void MixerView::rebuildStrips()
 {
     for (auto* s : strips_) {
-        s->disconnect();
+        // Only cut strip -> MixerView connections. A bare s->disconnect() also drops
+        // the destroyed() connection Qt's accessibility cache relies on, leaving a
+        // dangling accessible interface that crashes when UI Automation is active.
+        disconnect(s, nullptr, this, nullptr);
+        // The strip lives until deleteLater runs, so also stop it reacting to
+        // the same edit signals that triggered this rebuild (its track may be gone).
+        QObject::disconnect(editMgr_, nullptr, s, nullptr);
+        s->detach();
         stripLayout_->removeWidget(s);
+        s->hide();
         s->deleteLater();
     }
     strips_.clear();

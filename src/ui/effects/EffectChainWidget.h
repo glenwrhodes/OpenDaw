@@ -69,6 +69,7 @@ private:
     te::PluginList* targetPluginList() const;
 
     void scheduleRebuild();
+    void clearSlots();
 
     juce::KnownPluginList* knownPlugins_ = nullptr;
 

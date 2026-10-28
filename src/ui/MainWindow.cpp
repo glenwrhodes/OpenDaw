@@ -25,6 +25,8 @@
 #include <QPlainTextEdit>
 #include <QComboBox>
 #include <QShortcutEvent>
+#include <QTabBar>
+#include <QFontMetrics>
 #include <QTimer>
 #include <QtConcurrent/QtConcurrent>
 #include <QDebug>
@@ -100,12 +102,21 @@ MainWindow::MainWindow(OpenDawApplication& app, QWidget* parent)
             });
 
     connect(timelineView_, &TimelineView::selectedClipsDeleted,
-            this, [this]() {
-                if (pianoRoll_)
-                    pianoRoll_->setClip(nullptr, nullptr);
-                if (audioClipEditor_)
-                    audioClipEditor_->setClip(nullptr, nullptr);
-            });
+            this, &MainWindow::dropStaleEditorClips);
+    connect(timelineView_, &TimelineView::splitHandsRequested,
+            this, &MainWindow::onSplitPianoHands);
+    // Removing tracks (or an AI batch) deletes clips without an editChanged.
+    connect(&editMgr_, &EditManager::tracksChanged,
+            this, &MainWindow::dropStaleEditorClips);
+
+    // VST editor windows keep their plugin alive; close them before the
+    // plugin's Edit goes away or once the plugin is removed from it.
+    connect(&editMgr_, &EditManager::aboutToChangeEdit,
+            this, []() { PluginEditorWindow::closeAll(); });
+    connect(&editMgr_, &EditManager::tracksChanged,
+            this, []() { PluginEditorWindow::closeOrphaned(); });
+    connect(&editMgr_, &EditManager::editChanged,
+            this, []() { PluginEditorWindow::closeOrphaned(); });
 
     setCorner(Qt::TopRightCorner, Qt::RightDockWidgetArea);
     setCorner(Qt::BottomRightCorner, Qt::RightDockWidgetArea);
@@ -122,6 +133,20 @@ MainWindow::MainWindow(OpenDawApplication& app, QWidget* parent)
     createStatusBar();
 
     resizeDocks({mixerDock_}, {350}, Qt::Vertical);
+
+    // saveState()/restoreState() match docks and toolbars by object name.
+    mixerDock_->setObjectName("MixerDock");
+    pianoRollDock_->setObjectName("PianoRollDock");
+    audioClipDock_->setObjectName("AudioClipDock");
+    routingDock_->setObjectName("RoutingDock");
+    sheetMusicDock_->setObjectName("SheetMusicDock");
+    videoPlayerDock_->setObjectName("VideoPlayerDock");
+    browserDock_->setObjectName("BrowserDock");
+    effectsDock_->setObjectName("EffectsDock");
+    aiDock_->setObjectName("AiDock");
+    transportToolBar_->setObjectName("TransportToolBar");
+    mainToolBar_->setObjectName("MainToolBar");
+    restoreWindowLayout();
 
     connect(&editMgr_, &EditManager::editChanged, this, &MainWindow::updateWindowTitle);
     connect(&editMgr_, &EditManager::editChanged, this, [this]() {
@@ -154,7 +179,22 @@ MainWindow::MainWindow(OpenDawApplication& app, QWidget* parent)
             });
 }
 
-MainWindow::~MainWindow() = default;
+MainWindow::~MainWindow()
+{
+    PluginEditorWindow::closeAll();
+}
+
+void MainWindow::dropStaleEditorClips()
+{
+    if (pianoRoll_)
+        pianoRoll_->dropStaleClips();
+    if (audioClipEditor_ && audioClipEditor_->clip()
+        && !editMgr_.isClipValid(audioClipEditor_->clip()))
+        audioClipEditor_->setClip(nullptr, nullptr);
+    if (sheetMusicView_ && sheetMusicView_->clip()
+        && !editMgr_.isClipValid(sheetMusicView_->clip()))
+        sheetMusicView_->setClip(nullptr, nullptr);
+}
 
 bool MainWindow::maybeSaveBeforeAction()
 {
@@ -181,6 +221,7 @@ bool MainWindow::maybeSaveBeforeAction()
 void MainWindow::closeEvent(QCloseEvent* event)
 {
     if (maybeSaveBeforeAction()) {
+        saveWindowLayout();
         if (aiChatWidget_) aiChatWidget_->saveChatSessions();
         PluginEditorWindow::closeAll();
         editMgr_.stopAutosave();
@@ -243,23 +284,27 @@ void MainWindow::applyGlobalStyle()
         "QMenu::item:selected { background: %5; border-radius: 3px; margin: 0 4px; }"
         "QMenu::separator { height: 1px; background: %4; margin: 4px 8px; }"
 
-        "QToolBar { background: %2; border: none; spacing: 6px; }"
+        "QToolBar { background: %2; border: none; border-bottom: 1px solid %8; "
+        "  spacing: 2px; padding: 2px 6px; }"
+        "QToolBar::separator { background: %8; width: 1px; margin: 4px 6px; }"
         "QToolButton { background: transparent; color: %3; border: 1px solid transparent; "
-        "  border-radius: 5px; padding: 4px 8px; }"
+        "  border-radius: 4px; padding: 4px 6px; }"
         "QToolButton:hover { background: %6; border: 1px solid %4; }"
-        "QToolButton:pressed { background: %5; }"
+        "QToolButton:pressed { background: %1; }"
+        "QToolButton:checked { background: %9; border: 1px solid transparent; }"
+
+        "QMainWindow::separator { background: %8; width: 3px; height: 3px; }"
+        "QMainWindow::separator:hover { background: %5; }"
 
         "QDockWidget { background: %1; color: %3; font-size: 11px; }"
-        "QDockWidget::title { background: %2; padding: 6px 8px; "
-        "  border: none; border-bottom: 1px solid %4; font-weight: bold; }"
+        "QDockWidget::title { background: %2; padding: 5px 8px; color: %7; "
+        "  border: none; border-bottom: 1px solid %8; font-weight: bold; }"
         "QDockWidget > QWidget { background: %1; }"
 
-        "QTabBar { background: %1; }"
-        "QTabBar::tab { background: %2; color: %7; border: 1px solid %4; "
-        "  border-bottom: none; border-top-left-radius: 5px; border-top-right-radius: 5px; "
-        "  padding: 5px 14px; margin-right: 2px; font-size: 11px; }"
-        "QTabBar::tab:selected { background: %1; color: %3; "
-        "  border-bottom: 2px solid %5; font-weight: bold; }"
+        "QTabBar { background: %2; font-size: 11px; }"
+        "QTabBar::tab { background: %2; color: %7; border: none; "
+        "  border-top: 2px solid transparent; padding: 6px 16px; margin-right: 1px; }"
+        "QTabBar::tab:selected { background: %1; color: %3; border-top: 2px solid %5; }"
         "QTabBar::tab:hover:!selected { background: %6; color: %3; }"
 
         "QStatusBar { background: %2; color: %7; border-top: 1px solid %4; }"
@@ -313,7 +358,10 @@ void MainWindow::applyGlobalStyle()
         theme.border.name(),      // %4
         theme.accent.name(),      // %5
         theme.surfaceLight.name(),// %6
-        theme.textDim.name()      // %7
+        theme.textDim.name(),     // %7
+        theme.separator.name(),   // %8
+        QString("rgba(%1,%2,%3,45)").arg(theme.accent.red()).arg(theme.accent.green())
+            .arg(theme.accent.blue())   // %9
     );
 
     setStyleSheet(globalSS);
@@ -333,6 +381,12 @@ void MainWindow::createMenus()
     fileMenu->addAction("&Open Project...", QKeySequence::Open, this,
         &MainWindow::onOpenProject);
 
+    recentMenu_ = fileMenu->addMenu("Open &Recent");
+    recentMenu_->setAccessibleName("Recent Projects");
+    recentMenu_->setToolTipsVisible(true);
+    connect(recentMenu_, &QMenu::aboutToShow, this, &MainWindow::rebuildRecentMenu);
+    rebuildRecentMenu();
+
     fileMenu->addAction("&Save", QKeySequence::Save, this,
         &MainWindow::onSaveProject);
 
@@ -344,6 +398,10 @@ void MainWindow::createMenus()
         &MainWindow::onExportAudio);
 
     fileMenu->addSeparator();
+    fileMenu->addAction("Import &Audio...", QKeySequence("Ctrl+I"), this,
+        &MainWindow::onImportAudio);
+    fileMenu->addAction("Import &MIDI...", QKeySequence("Ctrl+Shift+I"), this,
+        &MainWindow::onImportMidi);
     fileMenu->addAction("Import &Video...", this, [this]() {
         QString path = QFileDialog::getOpenFileName(
             this, "Import Video", {},
@@ -372,6 +430,22 @@ void MainWindow::createMenus()
     // Edit menu
     auto* editMenu = menuBar->addMenu("&Edit");
 
+    auto* undoMenuAction = editMenu->addAction("&Undo\tCtrl+Z", this, [this]() { editMgr_.undo(); });
+    auto* redoMenuAction = editMenu->addAction("&Redo\tCtrl+Y", this, [this]() { editMgr_.redo(); });
+    connect(editMenu, &QMenu::aboutToShow, this, [this, undoMenuAction, redoMenuAction]() {
+        auto* edit = editMgr_.edit();
+        undoMenuAction->setEnabled(edit && edit->getUndoManager().canUndo());
+        redoMenuAction->setEnabled(edit && edit->getUndoManager().canRedo());
+    });
+    editMenu->addSeparator();
+    editMenu->addAction("&Delete Selected Clips\tDel", this, [this]() {
+        if (timelineView_) timelineView_->deleteSelectedClips();
+    });
+    editMenu->addAction("Select &All Clips\tCtrl+A", this, [this]() {
+        if (timelineView_) timelineView_->selectAllClips();
+    });
+    editMenu->addSeparator();
+
     editMenu->addAction("Add Audio &Track", QKeySequence("Ctrl+T"), this,
         &MainWindow::onAddTrack);
 
@@ -380,6 +454,9 @@ void MainWindow::createMenus()
 
     editMenu->addAction("&Remove Selected Track", this,
         &MainWindow::onRemoveTrack);
+    editMenu->addAction("Split Piano &Hands (AI)...", this, [this]() {
+        onSplitPianoHands(timelineView_ ? timelineView_->selectedTrack() : nullptr);
+    });
 
     editMenu->addSeparator();
     editMenu->addAction("&Copy Clips", QKeySequence::Copy, this, [this]() {
@@ -425,49 +502,42 @@ void MainWindow::createMenus()
     viewMenu->addAction("Zoom &Out", QKeySequence("Ctrl+-"), timelineView_,
         &TimelineView::zoomOut);
     viewMenu->addSeparator();
-    viewMenu->addAction("Toggle &Mixer", this, [this]() {
-        mixerDock_->setVisible(!mixerDock_->isVisible());
+    // A dock's toggleViewAction stays checked while the dock is open, even when
+    // it sits behind another tab, so the ticks show what is actually open.
+    auto addDockToggle = [this, viewMenu](QDockWidget* dock, const QString& text) {
+        auto* action = dock->toggleViewAction();
+        action->setText(text);
+        connect(action, &QAction::triggered, dock, [dock](bool shown) {
+            if (shown) dock->raise();
+        });
+        viewMenu->addAction(action);
+        return action;
+    };
+    addDockToggle(mixerDock_, "&Mixer");
+    addDockToggle(pianoRollDock_, "&Piano Roll");
+    addDockToggle(audioClipDock_, "Audio &Clip Editor");
+    addDockToggle(routingDock_, "&Routing");
+    addDockToggle(sheetMusicDock_, "&Sheet Music");
+    addDockToggle(videoPlayerDock_, "Video &Player");
+    viewMenu->addSeparator();
+    addDockToggle(browserDock_, "&Browser");
+    addDockToggle(effectsDock_, "&Effects");
+    auto* aiToggle = addDockToggle(aiDock_, "&AI Assistant");
+    connect(aiToggle, &QAction::triggered, this, [this](bool shown) {
+        if (shown) aiChatWidget_->focusInput();
     });
-    viewMenu->addAction("Toggle &Piano Roll", this, [this]() {
-        pianoRollDock_->setVisible(!pianoRollDock_->isVisible());
-        if (pianoRollDock_->isVisible()) pianoRollDock_->raise();
-    });
-    viewMenu->addAction("Toggle &Browser", this, [this]() {
-        browserDock_->setVisible(!browserDock_->isVisible());
-    });
-    viewMenu->addAction("Toggle &Effects", this, [this]() {
-        effectsDock_->setVisible(!effectsDock_->isVisible());
-    });
-    viewMenu->addAction("Toggle Audio &Clip Editor", this, [this]() {
-        audioClipDock_->setVisible(!audioClipDock_->isVisible());
-        if (audioClipDock_->isVisible()) audioClipDock_->raise();
-    });
-    viewMenu->addAction("Toggle &Routing", this, [this]() {
-        routingDock_->setVisible(!routingDock_->isVisible());
-        if (routingDock_->isVisible()) routingDock_->raise();
-    });
-    viewMenu->addAction("Toggle &Sheet Music", this, [this]() {
-        sheetMusicDock_->setVisible(!sheetMusicDock_->isVisible());
-        if (sheetMusicDock_->isVisible()) sheetMusicDock_->raise();
-    });
-    viewMenu->addAction("Toggle Marker/&Tempo Lane", this, [this]() {
+    viewMenu->addSeparator();
+    auto* markerLaneAction = viewMenu->addAction("Marker/&Tempo Lane", this, [this]() {
         if (timelineView_) timelineView_->toggleMarkerTempoLane();
     });
-    viewMenu->addAction("Toggle &Video Track", this, [this]() {
+    markerLaneAction->setCheckable(true);
+    auto* videoLaneAction = viewMenu->addAction("&Video Track", this, [this]() {
         if (timelineView_) timelineView_->toggleVideoLane();
     });
-    viewMenu->addAction("Toggle Video &Player", this, [this]() {
-        if (videoPlayerDock_) {
-            videoPlayerDock_->setVisible(!videoPlayerDock_->isVisible());
-            if (videoPlayerDock_->isVisible()) videoPlayerDock_->raise();
-        }
-    });
-    viewMenu->addAction("Toggle &AI Assistant", this, [this]() {
-        aiDock_->setVisible(!aiDock_->isVisible());
-        if (aiDock_->isVisible()) {
-            aiDock_->raise();
-            aiChatWidget_->focusInput();
-        }
+    videoLaneAction->setCheckable(true);
+    connect(viewMenu, &QMenu::aboutToShow, this, [this, markerLaneAction, videoLaneAction]() {
+        markerLaneAction->setChecked(timelineView_ && timelineView_->isMarkerTempoLaneVisible());
+        videoLaneAction->setChecked(timelineView_ && timelineView_->isVideoLaneVisible());
     });
     viewMenu->addSeparator();
     auto* quickPromptAction = viewMenu->addAction("AI &Quick Prompt",
@@ -762,7 +832,7 @@ void MainWindow::createDocks()
 
     connect(&editMgr_, &EditManager::midiClipModified,
             this, [this](te::MidiClip* clip) {
-                if (pianoRoll_ && pianoRoll_->clip() == clip)
+                if (pianoRoll_ && pianoRoll_->isShowingClip(clip))
                     pianoRoll_->refresh();
             });
 
@@ -993,12 +1063,7 @@ void MainWindow::onOpenProject()
         "Tracktion Edit (*.tracktionedit);;All Files (*)");
     if (path.isEmpty()) return;
 
-    settings.setValue("paths/lastFileDialogDir", QFileInfo(path).absolutePath());
-
-    juce::File file(juce::String(path.toUtf8().constData()));
-    editMgr_.loadEdit(file);
-    if (aiChatWidget_) aiChatWidget_->loadChatSessions();
-    updateWindowTitle();
+    loadFile(path);
 }
 
 void MainWindow::loadFile(const QString& path)
@@ -1008,12 +1073,191 @@ void MainWindow::loadFile(const QString& path)
         return;
 
     juce::File file(juce::String(fi.absoluteFilePath().toUtf8().constData()));
-    editMgr_.loadEdit(file);
+    const bool loaded = editMgr_.loadEdit(file);
     if (aiChatWidget_) aiChatWidget_->loadChatSessions();
     updateWindowTitle();
 
     QSettings settings;
     settings.setValue("paths/lastFileDialogDir", fi.absolutePath());
+
+    if (loaded) {
+        addRecentProject(fi.absoluteFilePath());
+    } else {
+        QMessageBox::warning(this, "Open Project",
+            QString("Could not open \"%1\".").arg(fi.fileName()));
+    }
+}
+
+// ── Recent projects ─────────────────────────────────────────────────────────
+
+static const char* kRecentProjectsKey = "recentProjects";
+static const int kMaxRecentProjects = 10;
+
+void MainWindow::addRecentProject(const QString& path)
+{
+    const QString full = QDir::toNativeSeparators(QFileInfo(path).absoluteFilePath());
+    QSettings settings;
+    QStringList recent = settings.value(kRecentProjectsKey).toStringList();
+    recent.removeIf([&](const QString& p) { return p.compare(full, Qt::CaseInsensitive) == 0; });
+    recent.prepend(full);
+    while (recent.size() > kMaxRecentProjects)
+        recent.removeLast();
+    settings.setValue(kRecentProjectsKey, recent);
+}
+
+void MainWindow::rebuildRecentMenu()
+{
+    if (!recentMenu_) return;
+    recentMenu_->clear();
+
+    const QStringList recent = QSettings().value(kRecentProjectsKey).toStringList();
+    if (recent.isEmpty()) {
+        recentMenu_->addAction("No recent projects")->setEnabled(false);
+        return;
+    }
+
+    const QFontMetrics fm(recentMenu_->font());
+    for (int i = 0; i < recent.size(); ++i) {
+        const QString& path = recent[i];
+        QFileInfo fi(path);
+        QString name = fi.completeBaseName();
+        name.replace('&', "&&");
+        QString folder = fm.elidedText(QDir::toNativeSeparators(fi.absolutePath()),
+                                       Qt::ElideMiddle, 360);
+        folder.replace('&', "&&");
+        QString text = (i < 9 ? QString("&%1  ").arg(i + 1) : QString("    "))
+                       + name + "    " + folder;
+        auto* action = recentMenu_->addAction(text, this, [this, path]() {
+            openRecentProject(path);
+        });
+        action->setToolTip(path);
+        if (!fi.exists())
+            action->setText(text + "  (missing)");
+    }
+    recentMenu_->addSeparator();
+    recentMenu_->addAction("&Clear Recent Projects", this, []() {
+        QSettings().remove(kRecentProjectsKey);
+    });
+}
+
+void MainWindow::openRecentProject(const QString& path)
+{
+    if (!QFileInfo::exists(path)) {
+        auto answer = QMessageBox::question(this, "Open Recent",
+            QString("\"%1\" no longer exists.\n\nRemove it from the recent projects list?")
+                .arg(QDir::toNativeSeparators(path)));
+        if (answer == QMessageBox::Yes) {
+            QSettings settings;
+            QStringList recent = settings.value(kRecentProjectsKey).toStringList();
+            recent.removeIf([&](const QString& p) { return p.compare(path, Qt::CaseInsensitive) == 0; });
+            settings.setValue(kRecentProjectsKey, recent);
+        }
+        return;
+    }
+    if (!maybeSaveBeforeAction()) return;
+    loadFile(path);
+}
+
+// ── Import ──────────────────────────────────────────────────────────────────
+
+static double playheadBeat(EditManager& editMgr)
+{
+    auto* edit = editMgr.edit();
+    if (!edit) return 0.0;
+    return std::max(0.0, edit->tempoSequence.toBeats(editMgr.transport().getPosition()).inBeats());
+}
+
+static QString importStartDir()
+{
+    QSettings settings;
+    QString dir = settings.value("paths/lastImportDir").toString();
+    if (dir.isEmpty() || !QDir(dir).exists())
+        dir = settings.value("paths/lastFileDialogDir", QDir::homePath()).toString();
+    if (dir.isEmpty() || !QDir(dir).exists())
+        dir = QDir::homePath();
+    return dir;
+}
+
+void MainWindow::onImportAudio()
+{
+    const QStringList paths = QFileDialog::getOpenFileNames(
+        this, "Import Audio", importStartDir(),
+        "Audio Files (*.wav *.aif *.aiff *.flac *.ogg *.mp3);;All Files (*)");
+    if (paths.isEmpty() || !editMgr_.edit()) return;
+    QSettings().setValue("paths/lastImportDir", QFileInfo(paths.first()).absolutePath());
+
+    // One file goes on the selected audio track; several get a track each.
+    te::AudioTrack* selected = timelineView_ ? timelineView_->selectedTrack() : nullptr;
+    const bool useSelected = paths.size() == 1 && selected && !editMgr_.isMidiTrack(selected)
+                             && !editMgr_.isBusTrack(selected);
+    const double beat = playheadBeat(editMgr_);
+
+    for (const auto& path : paths) {
+        te::AudioTrack* track = useSelected ? selected : editMgr_.addAudioTrack();
+        if (!track) break;
+        if (!useSelected)
+            track->setName(juce::String(QFileInfo(path).completeBaseName().toUtf8().constData()));
+        editMgr_.addAudioClipToTrack(*track, juce::File(juce::String(path.toUtf8().constData())), beat);
+    }
+    if (timelineView_) timelineView_->rebuildClips();
+    statusBar()->showMessage(QString("Imported %1 audio file%2 at the playhead")
+                                 .arg(paths.size()).arg(paths.size() == 1 ? "" : "s"), 5000);
+}
+
+void MainWindow::onImportMidi()
+{
+    const QString path = QFileDialog::getOpenFileName(
+        this, "Import MIDI", importStartDir(),
+        "MIDI Files (*.mid *.midi);;All Files (*)");
+    if (path.isEmpty() || !editMgr_.edit()) return;
+    QSettings().setValue("paths/lastImportDir", QFileInfo(path).absolutePath());
+
+    te::AudioTrack* track = timelineView_ ? timelineView_->selectedTrack() : nullptr;
+    if (!track || !editMgr_.isMidiTrack(track)) {
+        track = editMgr_.addMidiTrack();
+        if (!track) return;
+        track->setName(juce::String(QFileInfo(path).completeBaseName().toUtf8().constData()));
+    }
+    if (!editMgr_.importMidiFileToTrack(*track, juce::File(juce::String(path.toUtf8().constData())),
+                                        playheadBeat(editMgr_))) {
+        QMessageBox::warning(this, "Import MIDI",
+            QString("Could not read \"%1\" as a MIDI file.").arg(QFileInfo(path).fileName()));
+        return;
+    }
+    if (timelineView_) timelineView_->rebuildClips();
+    statusBar()->showMessage("Imported MIDI at the playhead", 5000);
+}
+
+// ── Window layout ───────────────────────────────────────────────────────────
+
+// Bump when docks or toolbars are added/renamed so a stale layout is ignored.
+static const int kWindowStateVersion = 1;
+
+void MainWindow::restoreWindowLayout()
+{
+    QSettings settings;
+    restoreGeometry(settings.value("window/geometry").toByteArray());
+    restoreState(settings.value("window/state").toByteArray(), kWindowStateVersion);
+    fixDockTabBars();
+}
+
+void MainWindow::saveWindowLayout()
+{
+    QSettings settings;
+    settings.setValue("window/geometry", saveGeometry());
+    settings.setValue("window/state", saveState(kWindowStateVersion));
+}
+
+void MainWindow::fixDockTabBars()
+{
+    // Dock tab bars elide by default ("Piano R..."); there is room for full names.
+    // QMainWindow creates them lazily, so look again once the layout settles.
+    auto apply = [this]() {
+        for (auto* tabBar : findChildren<QTabBar*>(Qt::FindDirectChildrenOnly))
+            tabBar->setElideMode(Qt::ElideNone);
+    };
+    apply();
+    QTimer::singleShot(0, this, apply);
 }
 
 void MainWindow::onSaveProject()
@@ -1023,7 +1267,9 @@ void MainWindow::onSaveProject()
         return;
     }
     if (routingView_) routingView_->flushNodePositions();
-    editMgr_.saveEdit();
+    if (editMgr_.saveEdit())
+        addRecentProject(QString::fromStdString(
+            editMgr_.currentFile().getFullPathName().toStdString()));
     if (aiChatWidget_) aiChatWidget_->saveChatSessions();
     updateWindowTitle();
 }
@@ -1044,7 +1290,8 @@ void MainWindow::onSaveProjectAs()
 
     if (routingView_) routingView_->flushNodePositions();
     juce::File file(juce::String(path.toUtf8().constData()));
-    editMgr_.saveEditAs(file);
+    if (editMgr_.saveEditAs(file))
+        addRecentProject(path);
     if (aiChatWidget_) aiChatWidget_->saveChatSessions();
     updateWindowTitle();
 }
@@ -1116,6 +1363,113 @@ void MainWindow::onRemoveTrack()
         QMessageBox::Yes | QMessageBox::No, QMessageBox::No);
     if (answer == QMessageBox::Yes)
         editMgr_.removeTrack(target);
+}
+
+void MainWindow::onSplitPianoHands(te::AudioTrack* track)
+{
+    const QString title = "Split Piano Hands";
+    if (!track) {
+        QMessageBox::information(this, title, "Select the piano track to split first.");
+        return;
+    }
+    if (!editMgr_.isMidiTrack(track)) {
+        QMessageBox::information(this, title, "Hand splitting works on MIDI tracks.");
+        return;
+    }
+
+    if (!handSplitter_) {
+        handSplitter_ = new AiHandSplitter(&editMgr_, this);
+        connect(handSplitter_, &AiHandSplitter::progress, this, [this](int done, int total) {
+            if (!handSplitProgress_) return;
+            // A single request has no meaningful progress; keep the busy bar.
+            handSplitProgress_->setMaximum(total > 1 ? total : 0);
+            handSplitProgress_->setValue(total > 1 ? done : 0);
+            if (total > 1)
+                handSplitProgress_->setLabelText(
+                    QString("Analysing hand movement... (%1 of %2 sections)").arg(done).arg(total));
+        });
+        connect(handSplitter_, &AiHandSplitter::finished,
+                this, &MainWindow::onHandSplitFinished);
+        connect(handSplitter_, &AiHandSplitter::failed, this, [this](const QString& message) {
+            closeHandSplitProgress();
+            QMessageBox::warning(this, "Split Piano Hands", message);
+        });
+    }
+    if (handSplitter_->isRunning()) {
+        QMessageBox::information(this, title, "A hand split is already running.");
+        return;
+    }
+
+    // Created before start(): start() reports progress straight away.
+    handSplitProgress_ = new QProgressDialog("Analysing hand movement...", "Cancel", 0, 0, this);
+    handSplitProgress_->setWindowTitle(title);
+    handSplitProgress_->setAccessibleName("Split Piano Hands Progress");
+    handSplitProgress_->setWindowModality(Qt::WindowModal);
+    handSplitProgress_->setMinimumDuration(0);
+    handSplitProgress_->setAutoClose(false);
+    handSplitProgress_->setAutoReset(false);
+    connect(handSplitProgress_, &QProgressDialog::canceled, this, [this]() {
+        if (handSplitter_) handSplitter_->cancel();
+        closeHandSplitProgress();
+        statusBar()->showMessage("Hand split cancelled", 4000);
+    });
+
+    QString error;
+    if (!handSplitter_->start(track, error)) {
+        closeHandSplitProgress();
+        QMessageBox::warning(this, title, error);
+        return;
+    }
+    if (handSplitProgress_)
+        handSplitProgress_->open();
+}
+
+void MainWindow::closeHandSplitProgress()
+{
+    if (!handSplitProgress_) return;
+    // close() would emit canceled(); detach first.
+    disconnect(handSplitProgress_, nullptr, this, nullptr);
+    handSplitProgress_->hide();
+    handSplitProgress_->deleteLater();
+    handSplitProgress_ = nullptr;
+}
+
+void MainWindow::onHandSplitFinished(const QVector<bool>& isLeftHand, int fallbackNotes)
+{
+    closeHandSplitProgress();
+    const QString title = "Split Piano Hands";
+
+    te::AudioTrack* track = nullptr;
+    for (auto* t : editMgr_.getAudioTracks())
+        if (t->itemID == handSplitter_->trackId())
+            track = t;
+    if (!track || !handSplitter_->matchesTrack(track)) {
+        QMessageBox::warning(this, title,
+            "The track changed while it was being analysed, so nothing was split. "
+            "Try again.");
+        return;
+    }
+
+    const int leftCount = static_cast<int>(std::count(isLeftHand.begin(), isLeftHand.end(), true));
+    const int rightCount = isLeftHand.size() - leftCount;
+    if (leftCount == 0 || rightCount == 0) {
+        QMessageBox::information(this, title,
+            QString("Every note was assigned to the %1 hand, so there is nothing to split.")
+                .arg(leftCount == 0 ? "right" : "left"));
+        return;
+    }
+
+    std::vector<bool> leftHand(isLeftHand.begin(), isLeftHand.end());
+    if (!editMgr_.splitTrackByHands(*track, leftHand)) {
+        QMessageBox::warning(this, title, "The track could not be split.");
+        return;
+    }
+
+    QString message = QString("Split into %1 right-hand and %2 left-hand notes")
+                          .arg(rightCount).arg(leftCount);
+    if (fallbackNotes > 0)
+        message += QString(" (%1 guessed without AI)").arg(fallbackNotes);
+    statusBar()->showMessage(message + ". Ctrl+Z to undo.", 10000);
 }
 
 void MainWindow::onSplitClipAtPlayhead()

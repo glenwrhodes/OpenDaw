@@ -14,7 +14,7 @@ AutomationLaneHeader::AutomationLaneHeader(te::AudioTrack* track, EditManager* e
     setAccessibleName("Automation Lane Header");
     auto& theme = ThemeManager::instance().current();
 
-    setFixedWidth(140);
+    setFixedWidth(metrics::kTrackHeaderWidth);
     setAutoFillBackground(true);
     QPalette pal;
     pal.setColor(QPalette::Window, theme.surface.darker(110));

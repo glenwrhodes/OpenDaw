@@ -22,6 +22,10 @@ public:
     void setExporting(bool exporting);
     void setProgress(float progress);
 
+    // The export can't be cancelled mid-render; hiding the dialog would leave
+    // the UI free to change the Edit the worker thread is rendering.
+    void reject() override;
+
 private:
     void onBrowse();
     void onFormatChanged(int index);
@@ -42,6 +46,7 @@ private:
     QPushButton* cancelBtn_ = nullptr;
     QProgressBar* progressBar_ = nullptr;
     QLabel* statusLabel_ = nullptr;
+    bool exporting_ = false;
 };
 
 } // namespace OpenDaw

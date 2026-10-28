@@ -45,6 +45,7 @@ private:
 
     EditManager* editMgr_;
 
+    QPushButton* rtzBtn_;
     QPushButton* playBtn_;
     QPushButton* stopBtn_;
     QPushButton* recordBtn_;

@@ -60,7 +60,7 @@ protected:
 private:
     bool isNearRightEdge(const QPointF& localPos) const;
     double computeSnappedEndBeatFromSceneX(double sceneX) const;
-    void paintMidiNotes(QPainter* painter, const QRectF& r);
+    void paintMidiNotes(QPainter* painter, const QRectF& r, const QColor& noteBase);
 
     double fadeInWidthPx() const;
     double fadeOutWidthPx() const;

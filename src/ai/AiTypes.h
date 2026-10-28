@@ -55,8 +55,10 @@ struct AiToolResult {
 };
 
 struct AiContentBlock {
-    QString type;          // "text" or "tool_use" or "tool_result"
-    QString text;          // for "text"
+    QString type;          // "text", "tool_use", "tool_result", "thinking" or "redacted_thinking"
+    QString text;          // for "text" and "thinking"
+    QString signature;     // for "thinking"
+    QString data;          // for "redacted_thinking"
     AiToolCall toolCall;   // for "tool_use"
     AiToolResult toolResult; // for "tool_result"
 
@@ -65,6 +67,11 @@ struct AiContentBlock {
         obj["type"] = type;
         if (type == "text") {
             obj["text"] = text;
+        } else if (type == "thinking") {
+            obj["thinking"] = text;
+            obj["signature"] = signature;
+        } else if (type == "redacted_thinking") {
+            obj["data"] = data;
         } else if (type == "tool_use") {
             obj["tool_call"] = toolCall.toJson();
         } else if (type == "tool_result") {
@@ -78,6 +85,11 @@ struct AiContentBlock {
         block.type = obj["type"].toString();
         if (block.type == "text") {
             block.text = obj["text"].toString();
+        } else if (block.type == "thinking") {
+            block.text = obj["thinking"].toString();
+            block.signature = obj["signature"].toString();
+        } else if (block.type == "redacted_thinking") {
+            block.data = obj["data"].toString();
         } else if (block.type == "tool_use") {
             block.toolCall = AiToolCall::fromJson(obj["tool_call"].toObject());
         } else if (block.type == "tool_result") {

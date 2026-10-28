@@ -13,12 +13,19 @@ VideoThumbnailCache::VideoThumbnailCache(QObject* parent)
 
 VideoThumbnailCache::~VideoThumbnailCache()
 {
+    stopRender();
+}
+
+void VideoThumbnailCache::stopRender()
+{
+    // decodeFilmstrip checks renderId_ between frames, so this returns quickly.
     renderId_.fetch_add(1);
+    renderFuture_.waitForFinished();
 }
 
 bool VideoThumbnailCache::openVideo(const QString& filePath)
 {
-    renderId_.fetch_add(1);
+    stopRender();
     decoder_->close();
     filmstrip_ = {};
     filePath_.clear();
@@ -31,7 +38,7 @@ bool VideoThumbnailCache::openVideo(const QString& filePath)
 
 void VideoThumbnailCache::closeVideo()
 {
-    renderId_.fetch_add(1);
+    stopRender();
     decoder_->close();
     filmstrip_ = {};
     filePath_.clear();
@@ -51,6 +58,7 @@ void VideoThumbnailCache::renderFilmstrip(const std::vector<double>& frameTimes,
 {
     if (frameTimes.empty() || !decoder_->isOpen()) return;
 
+    stopRender();
     uint64_t myId = renderId_.fetch_add(1) + 1;
     rendering_.store(true);
 
@@ -59,7 +67,7 @@ void VideoThumbnailCache::renderFilmstrip(const std::vector<double>& frameTimes,
     QSize sz = frameSize;
     double myPpb = ppb;
 
-    QtConcurrent::run([self, times, sz, myId, myPpb]() {
+    renderFuture_ = QtConcurrent::run([self, times, sz, myId, myPpb]() {
         auto& rid = self->renderId_;
 
         auto frames = self->decoder_->decodeFilmstrip(
@@ -97,13 +105,13 @@ void VideoThumbnailCache::renderFilmstrip(const std::vector<double>& frameTimes,
             }
         }
 
-        QPixmap pix = QPixmap::fromImage(std::move(strip));
-
         self->rendering_.store(false);
 
+        // QPixmap may only be created on the GUI thread.
         int tw = sz.width();
-        QMetaObject::invokeMethod(self, [self, pix, tw, myPpb]() {
-            self->filmstrip_ = pix;
+        QMetaObject::invokeMethod(self, [self, strip = std::move(strip), tw, myPpb, myId]() {
+            if (self->renderId_.load() != myId) return;
+            self->filmstrip_ = QPixmap::fromImage(strip);
             self->thumbWidth_ = tw;
             self->renderedPpb_ = myPpb;
             emit self->filmstripReady();

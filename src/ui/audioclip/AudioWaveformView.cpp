@@ -267,7 +267,11 @@ void AudioWaveformView::loadWaveformData()
     double clipEndBeat = ts.toBeats(clip_->getPosition().getEnd()).inBeats();
     double clipWidthPx = (clipEndBeat - clipStartBeat) * pixelsPerBeat_;
 
-    int numPoints = std::max(100, static_cast<int>(clipWidthPx));
+    // One point per pixel, capped: at deep zoom a long clip would otherwise ask
+    // for tens of millions of points (GBs of vectors + path). Drawing scales by
+    // point count, so the cap only coarsens the extreme zoom levels.
+    constexpr double kMaxWavePoints = 1 << 20;
+    int numPoints = static_cast<int>(std::clamp(clipWidthPx, 100.0, kMaxWavePoints));
     auto wfData = WaveformCache::instance().getWaveform(file, numPoints);
     waveMin_ = wfData.minValues;
     waveMax_ = wfData.maxValues;

@@ -1,5 +1,6 @@
 #include "EditManager.h"
 #include "utils/FFmpegUtils.h"
+#include "utils/ThemeManager.h"
 #include <juce_audio_formats/juce_audio_formats.h>
 #include <tracktion_engine/tracktion_engine.h>
 #include <QDebug>
@@ -95,6 +96,7 @@ void EditManager::createDefaultEdit()
     edit_->ensureNumberOfAudioTracks(4);
     qDebug() << "[createDefaultEdit] 4 tracks ensured";
     ensureLevelMetersOnAllTracks();
+    assignMissingTrackColours();
     qDebug() << "[createDefaultEdit] level meters done";
     enableAllWaveInputDevices();
     qDebug() << "[createDefaultEdit] wave inputs enabled";
@@ -141,6 +143,7 @@ bool EditManager::loadEdit(const juce::File& file)
 
     qDebug() << "[loadEdit] ensuring level meters";
     ensureLevelMetersOnAllTracks();
+    assignMissingTrackColours();
 
     qDebug() << "[loadEdit] detecting MIDI tracks";
     for (auto* track : te::getAudioTracks(*edit_)) {
@@ -229,6 +232,7 @@ te::AudioTrack* EditManager::addAudioTrack()
                 newTrack->pluginList.insertPlugin(p, -1, nullptr);
         }
     }
+    assignMissingTrackColours();
     emit tracksChanged();
     return newTrack;
 }
@@ -372,16 +376,20 @@ void EditManager::undo()
 {
     if (!edit_) return;
     edit_->getUndoManager().undo();
-    markDirtyAndNotify();
+    // Rebuild track widgets first: editChanged refreshes existing headers and
+    // strips, which would read tracks this undo just removed.
     emit tracksChanged();
+    markDirtyAndNotify();
 }
 
 void EditManager::redo()
 {
     if (!edit_) return;
     edit_->getUndoManager().redo();
-    markDirtyAndNotify();
+    // Rebuild track widgets first: editChanged refreshes existing headers and
+    // strips, which would read tracks this redo just removed.
     emit tracksChanged();
+    markDirtyAndNotify();
 }
 
 double EditManager::getBpm() const
@@ -725,6 +733,127 @@ bool EditManager::isClipValid(te::Clip* clip) const
             if (c == clip) return true;
     }
     return false;
+}
+
+QColor EditManager::getTrackColour(te::Track* track) const
+{
+    if (track) {
+        auto c = track->getColour();
+        if (c.getAlpha() > 0)
+            return QColor(c.getRed(), c.getGreen(), c.getBlue());
+    }
+    const auto& palette = ThemeManager::trackPalette();
+    int index = track ? getAudioTracks().indexOf(dynamic_cast<te::AudioTrack*>(track)) : 0;
+    return palette[size_t(std::max(0, index)) % palette.size()];
+}
+
+void EditManager::setTrackColour(te::Track& track, const QColor& colour)
+{
+    track.setColour(juce::Colour(juce::uint8(colour.red()), juce::uint8(colour.green()),
+                                 juce::uint8(colour.blue())));
+    markDirtyAndNotify();
+}
+
+void EditManager::assignMissingTrackColours()
+{
+    if (!edit_) return;
+    const auto& palette = ThemeManager::trackPalette();
+    auto tracks = getAudioTracks();
+    for (int i = 0; i < tracks.size(); ++i) {
+        if (tracks[i]->getColour().getAlpha() > 0) continue;
+        // No undo: the colour a track is born with shouldn't be an undo step.
+        const QColor& c = palette[size_t(i) % palette.size()];
+        juce::Colour colour(juce::uint8(c.red()), juce::uint8(c.green()), juce::uint8(c.blue()));
+        tracks[i]->state.setProperty(te::IDs::colour,
+                                     juce::VariantConverter<juce::Colour>::toVar(colour), nullptr);
+    }
+}
+
+void EditManager::removeClip(te::Clip* clip)
+{
+    if (!isClipValid(clip)) return;
+    clip->removeFromParent();
+    markDirtyAndNotify();
+}
+
+std::vector<EditManager::TrackNoteRef> EditManager::getTrackMidiNotes(te::AudioTrack* track) const
+{
+    std::vector<TrackNoteRef> result;
+    if (!edit_ || !track) return result;
+    for (auto* clip : track->getClips()) {
+        if (auto* mc = dynamic_cast<te::MidiClip*>(clip))
+            for (auto* note : mc->getSequence().getNotes())
+                result.push_back({ mc, note });
+    }
+    return result;
+}
+
+te::AudioTrack* EditManager::splitTrackByHands(te::AudioTrack& track,
+                                               const std::vector<bool>& isLeftHand)
+{
+    if (!edit_ || isTrackFrozen(&track)) return nullptr;
+
+    auto rightNotes = getTrackMidiNotes(&track);
+    if (rightNotes.empty() || rightNotes.size() != isLeftHand.size()) return nullptr;
+
+    auto& um = edit_->getUndoManager();
+    um.beginNewTransaction("Split Piano Hands");
+
+    auto copyPtr = edit_->copyTrack(&track, te::TrackInsertPoint(track, false));
+    auto* leftTrack = dynamic_cast<te::AudioTrack*>(copyPtr.get());
+    if (!leftTrack) return nullptr;
+
+    // The copy is a ValueTree clone, so its notes come back in the same order.
+    auto leftNotes = getTrackMidiNotes(leftTrack);
+    bool sameOrder = leftNotes.size() == rightNotes.size();
+    for (size_t i = 0; sameOrder && i < leftNotes.size(); ++i) {
+        auto* a = rightNotes[i].note;
+        auto* b = leftNotes[i].note;
+        sameOrder = a->getNoteNumber() == b->getNoteNumber()
+                    && a->getStartBeat() == b->getStartBeat();
+    }
+    if (!sameOrder) {
+        edit_->deleteTrack(leftTrack);
+        return nullptr;
+    }
+
+    for (size_t i = 0; i < rightNotes.size(); ++i) {
+        auto& ref = isLeftHand[i] ? rightNotes[i] : leftNotes[i];
+        ref.clip->getSequence().removeNote(*ref.note, &um);
+    }
+
+    const auto name = track.getName();
+    track.setName(name + " (RH)");
+    leftTrack->setName(name + " (LH)");
+
+    if (midiTrackIds_.count(track.itemID.getRawID()) > 0)
+        midiTrackIds_.insert(leftTrack->itemID.getRawID());
+
+    // Show the left hand directly under the right hand (folder membership is a
+    // track property, so the copy already sits in the same folder).
+    auto items = getDisplayItems();
+    for (int i = 0; i < items.size(); ++i) {
+        if (items[i].type == DisplayItem::Track && items[i].track == leftTrack) {
+            items.removeAt(i);
+            break;
+        }
+    }
+    for (int i = 0; i < items.size(); ++i) {
+        if (items[i].type == DisplayItem::Track && items[i].track == &track) {
+            DisplayItem leftItem;
+            leftItem.type = DisplayItem::Track;
+            leftItem.track = leftTrack;
+            leftItem.parentFolderId = items[i].parentFolderId;
+            items.insert(i + 1, leftItem);
+            break;
+        }
+    }
+    saveDisplayItems(items);
+
+    emit tracksChanged();
+    emit routingChanged();
+    markDirtyAndNotify();
+    return leftTrack;
 }
 
 te::MidiClip* EditManager::addLinkedMidiChannel(te::AudioTrack& track,
@@ -2070,7 +2199,9 @@ void EditManager::stopAutosave()
 
 void EditManager::performAutosave()
 {
-    if (!edit_) return;
+    // Saving flushes plugin state, which races with an export rendering the
+    // same Edit on a worker thread; the next tick will catch up.
+    if (!edit_ || renderInProgress_) return;
 
     auto dir = autosaveDir();
     auto id = autosaveFileId();

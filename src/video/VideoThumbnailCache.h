@@ -1,6 +1,7 @@
 #pragma once
 
 #include "utils/FFmpegUtils.h"
+#include <QFuture>
 #include <QObject>
 #include <QPixmap>
 #include <QSize>
@@ -39,7 +40,11 @@ signals:
     void videoClosed();
 
 private:
+    // Cancels and joins the filmstrip worker; it uses decoder_ and `this`.
+    void stopRender();
+
     std::unique_ptr<VideoDecoder> decoder_;
+    QFuture<void> renderFuture_;
     QString filePath_;
     QPixmap filmstrip_;
     int thumbWidth_ = 0;

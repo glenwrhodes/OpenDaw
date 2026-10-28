@@ -20,7 +20,7 @@ FolderHeaderWidget::FolderHeaderWidget(int folderId, EditManager* editMgr,
 
     collapsed_ = editMgr_->isFolderCollapsed(folderId_);
 
-    setFixedWidth(140);
+    setFixedWidth(metrics::kTrackHeaderWidth);
     setFixedHeight(28);
     setAutoFillBackground(true);
     QPalette pal;

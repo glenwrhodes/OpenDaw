@@ -3,35 +3,46 @@
 #include <QColor>
 #include <QString>
 #include <QFont>
+#include <vector>
 
 namespace OpenDaw {
 
+// Shared sizes so the track, folder and automation headers line up.
+namespace metrics {
+    constexpr int kTrackHeaderWidth = 220;
+    constexpr int kTrackColourStrip = 5;
+}
+
 struct Theme {
-    QColor background         {24, 24, 26};
-    QColor surface            {32, 33, 36};
-    QColor surfaceLight       {48, 50, 54};
-    QColor border             {52, 54, 58};
-    QColor text               {225, 228, 232};
-    QColor textDim            {130, 134, 140};
-    QColor accent             {0, 168, 150};
-    QColor accentLight        {40, 210, 190};
-    QColor trackBackground    {28, 28, 32};
+    // Neutral graphite UI: dark separators between lighter panels, one blue accent.
+    QColor background         {29, 30, 33};
+    QColor surface            {40, 41, 45};
+    QColor surfaceLight       {53, 55, 60};
+    QColor border             {62, 64, 70};
+    QColor separator          {16, 17, 19};
+    QColor text               {222, 224, 228};
+    QColor textDim            {142, 146, 154};
+    QColor accent             {64, 140, 230};
+    QColor accentLight        {122, 180, 246};
+    QColor trackBackground    {34, 35, 39};
     QColor clipBody           {50, 130, 120, 180};
     QColor clipBodySelected   {70, 175, 160, 200};
-    QColor waveform           {170, 240, 228};
-    QColor playhead           {255, 80, 60};
-    QColor gridLine           {40, 42, 46};
-    QColor gridLineMajor      {56, 58, 62};
-    QColor meterGreen         {0, 190, 170};
-    QColor meterYellow        {0, 220, 200};
-    QColor meterRed           {244, 67, 54};
-    QColor meterGlow          {0, 255, 230, 60};
-    QColor muteButton         {255, 152, 0};
-    QColor soloButton         {255, 235, 59};
-    QColor recordArm          {244, 67, 54};
-    QColor transportPlay      {76, 200, 100};
+    QColor waveform           {200, 222, 240};
+    QColor playhead           {255, 72, 60};
+    QColor gridLine           {42, 43, 48};
+    QColor gridLineMajor      {60, 62, 68};
+    QColor meterGreen         {72, 200, 96};
+    QColor meterYellow        {232, 196, 60};
+    QColor meterRed           {236, 64, 52};
+    QColor meterGlow          {72, 200, 96, 50};
+    QColor muteButton         {236, 140, 40};
+    QColor soloButton         {232, 200, 48};
+    QColor recordArm          {222, 52, 48};
+    QColor transportPlay      {70, 200, 105};
     QColor transportStop      {200, 200, 200};
-    QColor transportRecord    {244, 67, 54};
+    QColor transportRecord    {222, 52, 48};
+    QColor lcdText            {150, 228, 172};
+    QColor lcdBackground      {13, 14, 16};
 
     QColor midiClipBody           {60, 95, 145, 180};
     QColor midiClipBodySelected   {80, 125, 180, 200};
@@ -54,6 +65,9 @@ public:
 
     const Theme& current() const { return theme_; }
     void setCurrent(const Theme& t) { theme_ = t; }
+
+    // Muted, distinct colours new tracks cycle through.
+    static const std::vector<QColor>& trackPalette();
 
 private:
     ThemeManager() = default;

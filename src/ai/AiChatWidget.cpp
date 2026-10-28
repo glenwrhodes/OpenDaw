@@ -6,6 +6,7 @@
 #include "utils/IconFont.h"
 #include <QHBoxLayout>
 #include <QDialog>
+#include <QComboBox>
 #include <QDialogButtonBox>
 #include <QFormLayout>
 #include <QMessageBox>
@@ -759,8 +760,9 @@ void AiChatWidget::showSettingsDialog()
     dialog->setStyleSheet(
         QString("QDialog { background: %1; color: %2; }"
                 "QLabel { color: %2; }"
-                "QLineEdit { background: %3; color: %2; border: 1px solid %4; "
+                "QLineEdit, QComboBox { background: %3; color: %2; border: 1px solid %4; "
                 "border-radius: 4px; padding: 4px 8px; }"
+                "QComboBox QLineEdit { border: none; padding: 0; background: transparent; }"
                 "QCheckBox { color: %2; }"
                 "QPushButton { background: %5; color: %2; border: 1px solid %4; "
                 "border-radius: 4px; padding: 6px 16px; }"
@@ -777,10 +779,15 @@ void AiChatWidget::showSettingsDialog()
     apiKeyEdit->setPlaceholderText("sk-ant-...");
     layout->addRow("API Key:", apiKeyEdit);
 
-    auto* modelEdit = new QLineEdit(aiService_->model(), dialog);
-    modelEdit->setAccessibleName("Model Name");
-    modelEdit->setPlaceholderText("claude-opus-4-6");
-    layout->addRow("Model:", modelEdit);
+    auto* modelCombo = new QComboBox(dialog);
+    modelCombo->setAccessibleName("Model Name");
+    modelCombo->setEditable(true);
+    modelCombo->addItems(AiService::suggestedModels());
+    modelCombo->setCurrentText(aiService_->model());
+    modelCombo->lineEdit()->setPlaceholderText(AiService::defaultModel());
+    modelCombo->setToolTip("Pick a model or type any Claude model ID. "
+                           "Leave blank to use the default (" + AiService::defaultModel() + ").");
+    layout->addRow("Model:", modelCombo);
 
     auto* confirmCheck = new QCheckBox("Confirm destructive actions", dialog);
     confirmCheck->setAccessibleName("Confirm destructive actions");
@@ -798,7 +805,7 @@ void AiChatWidget::showSettingsDialog()
 
     connect(btnBox, &QDialogButtonBox::accepted, dialog, [=]() {
         aiService_->setApiKey(apiKeyEdit->text().trimmed());
-        aiService_->setModel(modelEdit->text().trimmed());
+        aiService_->setModel(modelCombo->currentText().trimmed());
         aiService_->setConfirmDestructive(confirmCheck->isChecked());
         aiService_->setPreviewMixPlanMode(previewMixPlanCheck->isChecked());
         dialog->accept();

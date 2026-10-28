@@ -140,6 +140,8 @@ void VideoPlayerWidget::closeVideo()
     if (swsCtx_) { sws_freeContext(swsCtx_); swsCtx_ = nullptr; }
     if (codecCtx_) { avcodec_free_context(&codecCtx_); }
     if (fmtCtx_) { avformat_close_input(&fmtCtx_); }
+    // Drop the old file's frame so it is never scaled with the next file's format.
+    if (frame_) av_frame_unref(frame_);
     videoStreamIdx_ = -1;
     currentFrame_ = {};
     lastDisplayTime_ = -1.0;
@@ -204,7 +206,7 @@ bool VideoPlayerWidget::decodeNextFrame()
 
 QImage VideoPlayerWidget::convertFrame()
 {
-    if (!frame_ || frame_->width <= 0 || frame_->height <= 0)
+    if (!frame_ || frame_->width <= 0 || frame_->height <= 0 || videoH_ <= 0)
         return {};
 
     int displayH = height() - 28;
@@ -224,7 +226,7 @@ QImage VideoPlayerWidget::convertFrame()
         swsCtx_ = nullptr;
     }
     swsCtx_ = sws_getContext(frame_->width, frame_->height,
-                             codecCtx_->pix_fmt,
+                             static_cast<AVPixelFormat>(frame_->format),
                              outW, outH, AV_PIX_FMT_RGB24,
                              SWS_BILINEAR, nullptr, nullptr, nullptr);
     if (!swsCtx_) return {};

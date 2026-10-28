@@ -156,6 +156,7 @@ namespace mi {
     inline const QChar Description       {0xE873};
     inline const QChar Chat              {0xE0B7};
     inline const QChar Warning           {0xE002};
+    inline const QChar AcUnit            {0xE3B0};
 }
 
 } // namespace icons

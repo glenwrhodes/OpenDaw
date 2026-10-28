@@ -12,7 +12,8 @@ PluginEditorWindow::PluginEditorWindow(te::ExternalPlugin& plugin)
     : juce::DocumentWindow(plugin.getName(),
                            juce::Colours::darkgrey,
                            juce::DocumentWindow::allButtons),
-      plugin_(plugin)
+      plugin_(plugin),
+      keepAlive_(&plugin)
 {
     setUsingNativeTitleBar(true);
     setResizable(true, false);
@@ -80,6 +81,14 @@ void PluginEditorWindow::closeForPlugin(te::ExternalPlugin& plugin)
 void PluginEditorWindow::closeAll()
 {
     openWindows_.clear();
+}
+
+void PluginEditorWindow::closeOrphaned()
+{
+    std::erase_if(openWindows_, [](const std::unique_ptr<PluginEditorWindow>& w) {
+        auto& p = w->plugin_;
+        return !te::getAllPlugins(p.edit, false).contains(&p);
+    });
 }
 
 } // namespace OpenDaw

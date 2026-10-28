@@ -240,9 +240,8 @@ void ClipItem::loadMidiPreviewFromClips(const std::vector<te::MidiClip*>& clips)
     midiHighestNote_ = std::min(127, midiHighestNote_ + margin);
 }
 
-void ClipItem::paintMidiNotes(QPainter* painter, const QRectF& r)
+void ClipItem::paintMidiNotes(QPainter* painter, const QRectF& r, const QColor& noteBase)
 {
-    auto& theme = ThemeManager::instance().current();
     if (midiNotes_.empty() || !clip_ || !pixelsPerBeatPtr_) return;
 
     int pitchRange = midiHighestNote_ - midiLowestNote_ + 1;
@@ -258,8 +257,8 @@ void ClipItem::paintMidiNotes(QPainter* painter, const QRectF& r)
         double y = r.bottom() - (note.pitch - midiLowestNote_ + 1) * noteRowH;
         double h = std::max(1.0, noteRowH - 0.5);
 
-        double alpha = 0.5 + 0.5 * (note.velocity / 127.0);
-        QColor noteColor = theme.midiNotePreview;
+        double alpha = 0.55 + 0.45 * (note.velocity / 127.0);
+        QColor noteColor = noteBase;
         noteColor.setAlphaF(alpha);
 
         painter->fillRect(QRectF(x, y, w, h), noteColor);
@@ -274,23 +273,37 @@ void ClipItem::paint(QPainter* painter,
 {
     auto& theme = ThemeManager::instance().current();
     QRectF r = rect();
+    const bool selected = isSelected();
 
-    QColor bg;
-    if (isMidiClip_)
-        bg = isSelected() ? theme.midiClipBodySelected : theme.midiClipBody;
-    else
-        bg = isSelected() ? theme.clipBodySelected : theme.clipBody;
+    // Clips take their track's colour: a solid title bar over a tinted body.
+    QColor trackColour = theme.accent;
+    if (editMgr_ && clip_)
+        trackColour = editMgr_->getTrackColour(clip_->getTrack());
+    auto mix = [](const QColor& a, const QColor& b, double t) {
+        return QColor(int(a.red() * t + b.red() * (1 - t)),
+                      int(a.green() * t + b.green() * (1 - t)),
+                      int(a.blue() * t + b.blue() * (1 - t)));
+    };
+    const QColor body = mix(trackColour, theme.trackBackground, selected ? 0.55 : 0.38);
+    const QColor titleBar = selected ? trackColour.lighter(115) : trackColour.darker(105);
+    const QColor content = selected ? QColor(245, 247, 250) : trackColour.lighter(165);
+    const double radius = 3.0;
+    const double titleH = r.height() >= 34.0 ? 14.0 : 0.0;
+    const QRectF bodyRect = r.adjusted(0, titleH, 0, 0);
 
     painter->setRenderHint(QPainter::Antialiasing, true);
     painter->setPen(Qt::NoPen);
-    painter->setBrush(bg);
-    painter->drawRoundedRect(r.adjusted(0.5, 0.5, -0.5, -0.5), 4.0, 4.0);
+    painter->setBrush(body);
+    painter->drawRoundedRect(r.adjusted(0.5, 0.5, -0.5, -0.5), radius, radius);
 
-    QLinearGradient topHighlight(r.topLeft(), QPointF(r.left(), r.top() + 6));
-    topHighlight.setColorAt(0.0, QColor(255, 255, 255, 22));
-    topHighlight.setColorAt(1.0, QColor(255, 255, 255, 0));
-    painter->setBrush(topHighlight);
-    painter->drawRoundedRect(r.adjusted(0.5, 0.5, -0.5, -0.5), 4.0, 4.0);
+    if (titleH > 0.0) {
+        QPainterPath titlePath;
+        titlePath.addRoundedRect(r.adjusted(0.5, 0.5, -0.5, -0.5), radius, radius);
+        QPainterPath clipToTitle;
+        clipToTitle.addRect(QRectF(r.left(), r.top(), r.width(), titleH));
+        painter->setBrush(titleBar);
+        painter->drawPath(titlePath.intersected(clipToTitle));
+    }
 
     if (!waveMin_.empty() && !waveMax_.empty()) {
         int n = static_cast<int>(waveMin_.size());
@@ -318,26 +331,26 @@ void ClipItem::paint(QPainter* painter,
                 return;
 
             const double xScale = width / n;
-            const double midY   = r.height() / 2.0;
-            const double amp    = r.height() / 2.0 * 0.9;
+            const double midY   = bodyRect.height() / 2.0;
+            const double amp    = bodyRect.height() / 2.0 * 0.9;
 
             QPainterPath path;
-            path.moveTo(left, r.top() + midY);
+            path.moveTo(left, bodyRect.top() + midY);
             for (int i = 0; i < n; ++i)
                 path.lineTo(left + i * xScale,
-                            r.top() + midY - waveMax_[size_t(i)] * amp);
+                            bodyRect.top() + midY - waveMax_[size_t(i)] * amp);
             for (int i = n - 1; i >= 0; --i)
                 path.lineTo(left + i * xScale,
-                            r.top() + midY - waveMin_[size_t(i)] * amp);
+                            bodyRect.top() + midY - waveMin_[size_t(i)] * amp);
             path.closeSubpath();
 
             painter->setPen(Qt::NoPen);
-            painter->setBrush(theme.waveform);
+            painter->setBrush(content);
             painter->drawPath(path);
         };
 
         painter->save();
-        painter->setClipRect(r);
+        painter->setClipRect(bodyRect);
 
         if (segmentWidth < r.width() - 0.5) {
             for (double left = r.left(); left < r.right(); left += segmentWidth)
@@ -351,25 +364,32 @@ void ClipItem::paint(QPainter* painter,
     }
 
     if (isMidiClip_ && !midiNotes_.empty()) {
-        paintMidiNotes(painter, r);
+        paintMidiNotes(painter, bodyRect.adjusted(0, 2, 0, -2), content);
     }
 
     paintFadeOverlays(painter, r);
 
     painter->setRenderHint(QPainter::Antialiasing, true);
-    painter->setPen(QPen(QColor(theme.border.red(), theme.border.green(),
-                                theme.border.blue(), 140), 0.5));
+    painter->setPen(selected ? QPen(QColor(255, 255, 255, 230), 1.5)
+                             : QPen(trackColour.darker(160), 1.0));
     painter->setBrush(Qt::NoBrush);
-    painter->drawRoundedRect(r.adjusted(0.5, 0.5, -0.5, -0.5), 4.0, 4.0);
+    painter->drawRoundedRect(r.adjusted(0.5, 0.5, -0.5, -0.5), radius, radius);
 
     if (clip_) {
-        painter->setPen(theme.text);
+        // Dark text on light track colours, light text on dark ones.
+        const bool lightTitle = titleBar.lightnessF() > 0.55;
+        painter->setPen(titleH > 0.0 ? (lightTitle ? QColor(20, 20, 22) : QColor(250, 250, 252))
+                                     : theme.text);
         QFont f = painter->font();
         f.setPixelSize(10);
+        f.setBold(true);
         painter->setFont(f);
         QString name = QString::fromStdString(clip_->getName().toStdString());
-        painter->drawText(r.adjusted(4, 2, -2, 0),
-                          Qt::AlignLeft | Qt::AlignTop, name);
+        const QRectF textRect = r.adjusted(5, 0, -4, 0);
+        painter->drawText(QRectF(textRect.left(), r.top(), textRect.width(),
+                                 titleH > 0.0 ? titleH : 14.0),
+                          Qt::AlignLeft | Qt::AlignVCenter,
+                          QFontMetrics(f).elidedText(name, Qt::ElideRight, int(textRect.width())));
 
         if (linkedChannelCount_ > 1) {
             QString badge = QString("%1ch").arg(linkedChannelCount_);
@@ -418,7 +438,10 @@ void ClipItem::mousePressEvent(QGraphicsSceneMouseEvent* event)
                             tracktion::BeatPosition::fromBeats(snapped),
                             tracktion::BeatDuration::fromBeats(snappedLen), um);
                     }
-                    if (requestRefresh_) requestRefresh_();
+                    if (requestRefresh_) {
+                        auto refresh = requestRefresh_;
+                        QTimer::singleShot(0, editMgr_, [refresh]() { refresh(); });
+                    }
                 }
             });
             menu.addSeparator();
@@ -480,12 +503,11 @@ void ClipItem::mousePressEvent(QGraphicsSceneMouseEvent* event)
 
         menu.addAction("Delete", [this]() {
             if (!clip_ || !editMgr_) return;
-            clip_->removeFromParent();
-            clip_ = nullptr;
-            if (requestRefresh_) {
-                auto refresh = requestRefresh_;
-                QTimer::singleShot(0, [refresh]() { refresh(); });
-            }
+            // Deferred: the resulting editChanged rebuilds the clip items,
+            // which would delete this item inside its own mouse event.
+            auto* mgr = editMgr_;
+            te::Clip* clip = clip_;
+            QTimer::singleShot(0, mgr, [mgr, clip]() { mgr->removeClip(clip); });
         });
 
         menu.exec(event->screenPos());
