@@ -74,6 +74,7 @@ private:
     QList<QNetworkReply*> replies_;
     int chunksDone_ = 0;
     bool running_ = false;
+    int generation_ = 0;                // bumped per run, so stale retry timers do nothing
 };
 
 } // namespace OpenDaw

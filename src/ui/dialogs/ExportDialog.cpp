@@ -144,7 +144,7 @@ ExportDialog::ExportDialog(QWidget* parent)
     buttonRow->addWidget(exportBtn_);
 
     connect(pathEdit_, &QLineEdit::textChanged, this, [this](const QString& text) {
-        exportBtn_->setEnabled(!text.trimmed().isEmpty());
+        exportBtn_->setEnabled(!exporting_ && !text.trimmed().isEmpty());
     });
 
     connect(formatCombo_, QOverload<int>::of(&QComboBox::currentIndexChanged),
@@ -260,6 +260,7 @@ void ExportDialog::setExporting(bool exporting)
     cancelBtn_->setEnabled(!exporting);
     exportBtn_->setEnabled(!exporting);
     browseBtn_->setEnabled(!exporting);
+    pathEdit_->setEnabled(!exporting);
     formatCombo_->setEnabled(!exporting);
     sampleRateCombo_->setEnabled(!exporting);
     bitDepthCombo_->setEnabled(!exporting);

@@ -1505,6 +1505,14 @@ void MainWindow::onHandSplitFinished(const QVector<bool>& isLeftHand, int fallba
     closeHandSplitProgress();
     const QString title = "Split Piano Hands";
 
+    // The Edit must not change while an export renders it; apply the split afterwards.
+    if (editMgr_.isRenderInProgress()) {
+        QTimer::singleShot(250, this, [this, isLeftHand, fallbackNotes]() {
+            onHandSplitFinished(isLeftHand, fallbackNotes);
+        });
+        return;
+    }
+
     te::AudioTrack* track = nullptr;
     for (auto* t : editMgr_.getAudioTracks())
         if (t->itemID == handSplitter_->trackId())

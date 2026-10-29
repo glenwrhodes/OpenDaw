@@ -219,6 +219,11 @@ public:
 
     // Export / Freeze / Bounce
     bool isRenderInProgress() const { return renderInProgress_; }
+
+    // Set while playback has looping switched off until the playhead reaches the
+    // loop start. Kept here, not in TransportBar, so a theme change's window
+    // rebuild does not lose it.
+    bool& loopActivationDeferred() { return loopActivationDeferred_; }
     bool exportMix(const ExportSettings& settings,
                    std::function<void(float)> progressCallback);
     bool isTrackFrozen(te::AudioTrack* track) const;
@@ -264,6 +269,7 @@ private:
     std::unordered_set<uint64_t> midiTrackIds_;
     std::map<std::string, QString> inputDisplayNames_;
     std::atomic<bool> renderInProgress_ { false };   // set from the export worker thread
+    bool loopActivationDeferred_ = false;
     bool hasUnsavedChanges_ = false;
     bool engineSuspended_ = false;
     QTimer autosaveTimer_;

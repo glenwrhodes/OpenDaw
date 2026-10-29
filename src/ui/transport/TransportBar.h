@@ -64,7 +64,7 @@ private:
 
     QTimer positionTimer_;
     bool isRecording_ = false;
-    bool deferredLoopActivation_ = false;
+    bool& deferredLoopActivation_;   // lives in EditManager, so it survives a window rebuild
 };
 
 } // namespace OpenDaw

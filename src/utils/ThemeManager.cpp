@@ -5,6 +5,7 @@
 #include <QPainterPath>
 #include <QPixmap>
 #include <QSettings>
+#include <cmath>
 
 namespace OpenDaw {
 
@@ -342,6 +343,18 @@ void ThemeManager::loadSaved()
 void ThemeManager::saveChoice(const QString& name)
 {
     QSettings().setValue(kThemeSettingsKey, name);
+}
+
+QColor ThemeManager::readableTextOn(const QColor& background)
+{
+    // WCAG relative luminance; above ~0.18, black text has more contrast than white.
+    auto linear = [](double c) {
+        return c <= 0.03928 ? c / 12.92 : std::pow((c + 0.055) / 1.055, 2.4);
+    };
+    const double lum = 0.2126 * linear(background.redF())
+                     + 0.7152 * linear(background.greenF())
+                     + 0.0722 * linear(background.blueF());
+    return lum > 0.179 ? QColor(20, 20, 22) : QColor(240, 241, 244);
 }
 
 QString ThemeManager::dropDownArrowPath(const QColor& colour)

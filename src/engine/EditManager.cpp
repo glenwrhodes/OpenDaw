@@ -814,7 +814,8 @@ std::vector<EditManager::TrackNoteRef> EditManager::getTrackMidiNotes(te::AudioT
 te::AudioTrack* EditManager::splitTrackByHands(te::AudioTrack& track,
                                                const std::vector<bool>& isLeftHand)
 {
-    if (!edit_ || isTrackFrozen(&track)) return nullptr;
+    // Changing the Edit while an export renders it can crash.
+    if (!edit_ || renderInProgress_ || isTrackFrozen(&track)) return nullptr;
 
     auto rightNotes = getTrackMidiNotes(&track);
     if (rightNotes.empty() || rightNotes.size() != isLeftHand.size()) return nullptr;

@@ -6,6 +6,7 @@
 #include <QHBoxLayout>
 #include <QGridLayout>
 #include <QSignalBlocker>
+#include <algorithm>
 
 namespace OpenDaw {
 
@@ -261,6 +262,7 @@ EffectChainWidget::EffectChainWidget(EditManager* editMgr, QWidget* parent)
     // The slots hold raw plugin/parameter pointers into the Edit being replaced.
     connect(editMgr_, &EditManager::aboutToChangeEdit, this, [this]() {
         rebuildTimer_.stop();
+        pendingRemovals_.clear();
         if (track_) {
             track_ = nullptr;
             trackLabel_->setText("No track selected");
@@ -431,8 +433,15 @@ void EffectChainWidget::removeEffect(te::Plugin* plugin)
     plugin->setEnabled(false);
     if (auto* ext = dynamic_cast<te::ExternalPlugin*>(plugin))
         PluginEditorWindow::closeForPlugin(*ext);
-    QTimer::singleShot(50, this, [this, keep = te::Plugin::Ptr(plugin)]() {
-        if (!keep->getOwnerList()) return;   // already removed (undo, AI, project change)
+    pendingRemovals_.push_back(plugin);
+    QTimer::singleShot(50, this, [this, plugin]() {
+        // Gone from the list means the Edit changed and the plugin went with it.
+        auto it = std::find_if(pendingRemovals_.begin(), pendingRemovals_.end(),
+                               [plugin](const te::Plugin::Ptr& p) { return p.get() == plugin; });
+        if (it == pendingRemovals_.end()) return;
+        te::Plugin::Ptr keep = *it;
+        pendingRemovals_.erase(it);
+        if (!keep->getOwnerList()) return;   // already removed (undo, AI)
         keep->deleteFromParent();
         rebuild();
         if (editMgr_) emit editMgr_->editChanged();

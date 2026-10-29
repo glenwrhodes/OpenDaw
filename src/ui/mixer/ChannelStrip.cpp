@@ -103,7 +103,7 @@ void ChannelStrip::applyNameStyle()
     nameLabel_->setStyleSheet(
         QString("QLabel { color: %1; font-size: 11px; font-weight: bold; "
                 "background: %2; border-left: 3px solid %3; border-radius: 2px; padding: 3px; }")
-            .arg(QColor(240, 241, 244).name(), bg.name(), c.name()));
+            .arg(ThemeManager::readableTextOn(bg).name(), bg.name(), c.name()));
 }
 
 ChannelStrip* ChannelStrip::createMasterStrip(EditManager* editMgr,
@@ -481,10 +481,16 @@ void ChannelStrip::setupMasterUI()
 
     if (editMgr_ && editMgr_->edit()) {
         if (auto masterVol = editMgr_->edit()->getMasterVolumePlugin()) {
-            if (fader_)
+            // Showing the saved level must not write it back (it would round -60 dB to mute).
+            if (fader_) {
+                QSignalBlocker block(fader_);
                 fader_->setValue(dbToNormalized(masterVol->getVolumeDb()));
-            if (panKnob_)
+            }
+            if (panKnob_) {
+                QSignalBlocker block(panKnob_);
                 panKnob_->setValue(masterVol->getPan());
+            }
+            updateVolumeLabel();
         }
     }
 

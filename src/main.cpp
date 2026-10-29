@@ -3,6 +3,8 @@
 #include <QFile>
 #include <QFileInfo>
 #include <QMutex>
+#include <QDir>
+#include <QStandardPaths>
 #include <QDateTime>
 #include <QTimer>
 #include <QIcon>
@@ -106,6 +108,22 @@ static LONG WINAPI crashHandler(EXCEPTION_POINTERS* ep)
 }
 #endif
 
+// The exe folder when it is writable (portable and dev builds); otherwise, as when
+// installed under Program Files, per-user app data.
+static QString diagnosticsDir()
+{
+    const QString appDir = QApplication::applicationDirPath();
+    QFile probe(appDir + "/.opendaw-write-test");
+    if (probe.open(QIODevice::WriteOnly)) {
+        probe.close();
+        probe.remove();
+        return appDir;
+    }
+    const QString dataDir = QStandardPaths::writableLocation(QStandardPaths::AppLocalDataLocation);
+    QDir().mkpath(dataDir);
+    return dataDir;
+}
+
 int main(int argc, char* argv[])
 {
     QApplication qtApp(argc, argv);
@@ -117,8 +135,9 @@ int main(int argc, char* argv[])
 
 
     // Keep the previous run's log so a crash report survives the next launch.
-    const QString logPath = QApplication::applicationDirPath() + "/OpenDaw.log";
-    const QString prevLogPath = QApplication::applicationDirPath() + "/OpenDaw.prev.log";
+    const QString logDir = diagnosticsDir();
+    const QString logPath = logDir + "/OpenDaw.log";
+    const QString prevLogPath = logDir + "/OpenDaw.prev.log";
     if (QFile::exists(logPath)) {
         QFile::remove(prevLogPath);
         QFile::rename(logPath, prevLogPath);
@@ -141,7 +160,7 @@ int main(int argc, char* argv[])
     }
 
 #ifdef _WIN32
-    const QString dumpPath = QApplication::applicationDirPath() + "/OpenDaw-crash.dmp";
+    const QString dumpPath = QDir::toNativeSeparators(logDir + "/OpenDaw-crash.dmp");
     if (dumpPath.size() < MAX_PATH)
         dumpPath.toWCharArray(crashDumpPath);
     SetUnhandledExceptionFilter(crashHandler);

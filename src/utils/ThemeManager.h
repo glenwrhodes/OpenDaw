@@ -89,6 +89,9 @@ public:
     // url(). Combo boxes draw no arrow of their own once they are styled.
     static QString dropDownArrowPath(const QColor& colour);
 
+    // Near-white or near-black, whichever contrasts more with the background.
+    static QColor readableTextOn(const QColor& background);
+
 private:
     ThemeManager();
     Theme theme_;

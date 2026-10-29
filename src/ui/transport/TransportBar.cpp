@@ -12,7 +12,8 @@
 namespace OpenDaw {
 
 TransportBar::TransportBar(EditManager* editMgr, QWidget* parent)
-    : QWidget(parent), editMgr_(editMgr)
+    : QWidget(parent), editMgr_(editMgr),
+      deferredLoopActivation_(editMgr->loopActivationDeferred())
 {
     setAccessibleName("Transport Bar");
     setFixedHeight(58);
@@ -297,6 +298,12 @@ TransportBar::TransportBar(EditManager* editMgr, QWidget* parent)
         countInBtn_->setChecked(countInOn);
         countInCombo_->setEnabled(countInOn);
         syncCountInToEngine();
+    }
+
+    // A theme change rebuilds this bar mid-session; pick up a recording in progress.
+    if (editMgr_->edit() && editMgr_->transport().isRecording()) {
+        isRecording_ = true;
+        recordBtn_->setChecked(true);
     }
 
     connect(editMgr_, &EditManager::editChanged, this, [this]() {

@@ -84,6 +84,9 @@ private:
     QWidget* slotsContainer_;
     QVBoxLayout* slotsLayout_;
     QTimer rebuildTimer_;
+    // Plugins waiting for their delayed removal. Released when the Edit changes,
+    // since a plugin must not outlive its Edit.
+    std::vector<te::Plugin::Ptr> pendingRemovals_;
     QTimer automationPollTimer_;
 };
 

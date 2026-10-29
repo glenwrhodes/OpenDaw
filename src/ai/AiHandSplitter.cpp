@@ -99,6 +99,7 @@ bool AiHandSplitter::start(te::AudioTrack* track, QString& error)
 
     buildChunks();
     retries_ = QVector<int>(chunks_.size(), 0);
+    ++generation_;
     running_ = true;
     pending_.clear();
     for (int i = 0; i < chunks_.size(); ++i)
@@ -111,6 +112,7 @@ bool AiHandSplitter::start(te::AudioTrack* track, QString& error)
 
 void AiHandSplitter::cancel()
 {
+    ++generation_;
     running_ = false;
     pending_.clear();
     const auto replies = std::exchange(replies_, {});
@@ -289,8 +291,8 @@ void AiHandSplitter::handleReply(QNetworkReply* reply, int chunkIndex)
         int& retries = retries_[chunkIndex];
         if (retryable && retries < kMaxRetries) {
             ++retries;
-            QTimer::singleShot(3000 * retries, this, [this, chunkIndex]() {
-                if (running_) { pending_.prepend(chunkIndex); sendNextChunks(); }
+            QTimer::singleShot(3000 * retries, this, [this, chunkIndex, gen = generation_]() {
+                if (running_ && gen == generation_) { pending_.prepend(chunkIndex); sendNextChunks(); }
             });
             return;
         }
