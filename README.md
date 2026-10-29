@@ -18,7 +18,7 @@
 [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](CONTRIBUTING.md)
 
 Built with **Qt 6** for the UI and **Tracktion Engine** (JUCE) for the audio backend.
-Audio and MIDI tracks, a built-in piano roll, sheet music notation, a destructive audio clip editor, VST3 instrument support, bus routing, track automation, audio export, 8 built-in effects, an **AI assistant powered by Claude** — all free and open source.
+Audio and MIDI tracks, a built-in piano roll, sheet music notation, a destructive audio clip editor, VST3 instrument support, bus routing, track automation, audio export, 8 built-in effects, 12 colour themes, an **AI assistant powered by Claude** — all free and open source.
 
 <br>
 
@@ -29,9 +29,9 @@ Audio and MIDI tracks, a built-in piano roll, sheet music notation, a destructiv
 <br>
 
 <div align="center">
-<img src="resources/routing-view.png" alt="OpenDaw routing view showing input channels, audio tracks, a bus with effects, master output, and color-coded signal cables" width="800">
+<img src="resources/screenshots/main-window.png" alt="OpenDaw main window: an orchestral MIDI arrangement with colour-coded harp, timpani, strings, woodwinds and brass tracks, the mixer below, and the AI assistant panel describing the piece it composed" width="900">
 <br>
-<em>Signal routing view — drag cables between inputs, tracks, buses, and outputs</em>
+<em>An orchestral sketch composed by the AI assistant: arrangement, mixer, and the assistant's notes on what it wrote</em>
 </div>
 
 ---
@@ -51,9 +51,42 @@ Grab the latest release from the **[Releases page](https://github.com/glenwrhode
 
 ## Features
 
+### Themes
+
+Pick a look from **Edit > Theme**. The whole window restyles instantly — no restart, and your project, playback and undo history carry on. Your choice is remembered.
+
+| Theme | Look |
+|-------|------|
+| **Studio Graphite** | Neutral graphite with a blue accent (default) |
+| **Nebula Station** | Sci-fi: cold blue-grey panels, teal accent, cyan readouts |
+| **Conservatory** | Light and friendly: cream panels, walnut readouts, brass accent |
+| **Code Rain** | Green-on-black terminal style |
+| **Midnight Amber** | Navy with amber lamps |
+| **Synthwave** | Deep purple with neon magenta and cyan |
+| **Arctic Daylight** | Light and cool, with a clean blue accent |
+| **Vintage Console** | Warm brown analogue desk with teal readouts |
+| **Ember** | Charcoal with a red-orange glow |
+| **Forest Canopy** | Moss greens and bark browns |
+| **Slate Dusk** | Soft slate with peach and pastels |
+| **High Contrast** | Black, white and yellow, for legibility |
+
+Each theme has its own 12-colour track palette. Tracks remember a palette slot rather than a fixed colour, so they recolour with the theme.
+
+<div align="center">
+<img src="resources/screenshots/themes.png" alt="The same orchestral project shown in six themes: Nebula Station, Conservatory, Code Rain, Synthwave, Midnight Amber and Arctic Daylight" width="900">
+<br>
+<em>One project, six of the twelve themes</em>
+<br><br>
+<img src="resources/screenshots/theme-menu.png" alt="The Edit menu open on its Theme submenu, listing twelve themes with colour swatches" width="420">
+<br>
+<em>Edit > Theme, with a colour swatch for each theme</em>
+</div>
+
 ### Timeline / Arrangement
 
 - Starts with **4 audio tracks** by default
+- Every track gets a colour from the current theme's palette, shown on its header strip, its clips and its mixer strip; change it with right-click > **Track Colour**
+- Clips are drawn in their track's colour with a title bar showing the clip name
 - Multi-track audio and MIDI arrangement with horizontal scrolling
 - Drag-and-drop audio files (`.wav`, `.mp3`, `.flac`, `.ogg`, `.aiff`) and MIDI files (`.mid`, `.midi`) from the built-in file browser onto any track
 - Waveform display on audio clips; note preview on MIDI clips
@@ -66,7 +99,7 @@ Grab the latest release from the **[Releases page](https://github.com/glenwrhode
 - **User-assignable clip colors** — right-click any clip > Set Color to pick a custom color
 - Clip context menu: Edit in Piano Roll, Quantize, Duplicate, Set Color, Delete
 - Timeline context menu: Add Audio Track, Add MIDI Track, Create Empty MIDI Clip, Remove Track
-- Grid snapping with 5 modes: Off, 1/4 Beat, 1/2 Beat, Beat, Bar
+- Grid snapping: Off, Bar, 1/2, 1/4, 1/8, 1/16 or 1/32 (the **Grid** setting in the transport bar)
 - Horizontal and vertical zoom (Ctrl+= / Ctrl+-)
 - Drag the right edge of a clip to loop it (non-destructive clip looping)
 - Freeze tracks to reduce CPU load; bounce MIDI tracks to audio via the track context menu
@@ -102,10 +135,20 @@ Grab the latest release from the **[Releases page](https://github.com/glenwrhode
   - Right-click context menu: Select All, Delete Selected, Quantize, Add Note Here
 
 <div align="center">
-<img src="resources/piano-roll.png" alt="OpenDaw piano roll editor showing MIDI notes, velocity lane, and channel selector" width="800">
+<img src="resources/screenshots/piano-roll.png" alt="OpenDaw piano roll editing a harp part, with note grid, velocity lane, CC lane and MIDI channel list" width="900">
 <br>
 <em>Piano Roll — edit MIDI notes, velocity, and timing with snap-to-grid precision</em>
 </div>
+
+### AI Piano Hand Split
+
+Recorded a piano part onto one track? **Split Piano Hands (AI)** separates it into a right-hand (treble) and a left-hand (bass) track.
+
+- A fixed split point always gets some notes wrong: a low melody note ends up in the bass, or a high left-hand note in the treble. Instead, Claude reads the notes in order and decides which hand played each one, from hand position, reach and voice leading — the way the part would be written across a grand staff
+- Run it from the track header's right-click menu or from **Edit > Split Piano Hands (AI)...**
+- The original track becomes **"<name> (RH)"** and a new **"<name> (LH)"** track is added beneath it; the split is a single undo step
+- Long performances are cut at bar lines and analysed in parallel, with a progress dialog you can cancel
+- Uses the same Anthropic API key as the AI assistant
 
 ### Sheet Music View
 
@@ -120,7 +163,7 @@ Grab the latest release from the **[Releases page](https://github.com/glenwrhode
 - Opens automatically when you double-click a MIDI clip (alongside the Piano Roll)
 
 <div align="center">
-<img src="resources/sheet-music-view.png" alt="OpenDaw sheet music view showing standard notation with treble and bass clefs, key signature, and measure numbers" width="800">
+<img src="resources/screenshots/sheet-music.png" alt="OpenDaw sheet music view showing a harp part as a grand staff with treble and bass clefs, beamed notes, rests and measure numbers" width="900">
 <br>
 <em>Sheet Music View — see your MIDI clips rendered as standard notation with key signatures and proper engraving</em>
 </div>
@@ -166,13 +209,14 @@ Grab the latest release from the **[Releases page](https://github.com/glenwrhode
 
 ### Transport
 
-- Play, Stop, Record, and Loop buttons
+- Return to Start, Stop, Play, Record, Loop and Metronome buttons
+- **Count-in** before recording (1 or 2 bars, or 1 or 2 beats)
+- Position counter showing bars | beats | ticks, with elapsed time (m:ss.ms) underneath
+- Tempo (20-300 BPM), meter and grid in a display panel beside the counter — type a value, or scroll over it to change it
 - Click the time ruler to jump the playhead (snaps to grid)
 - Click and drag the ruler to scrub smoothly without snapping
-- BPM control (20-300 BPM)
-- Time signature control (numerator / denominator)
-- Dual position display: elapsed time (mm:ss.ms) and bars.beats.ticks
 - MIDI Panic (Ctrl+Shift+P) — sends all-notes-off on every channel to silence stuck notes
+- **Engine On/Off** — suspend the audio engine to free the audio device for another app
 
 ### Export Audio
 
@@ -203,22 +247,25 @@ Grab the latest release from the **[Releases page](https://github.com/glenwrhode
 
 ### Track Headers (left panel)
 
-- Per-track controls: name, Mute (M), Solo (S), Record Arm (R), Mono/Stereo toggle
-- Track type badge: **AUDIO**, **MIDI**, or **BUS**
-- Input source selector and output destination selector (Master or any bus)
-- Instrument button on MIDI tracks (opens VST editor)
-- Horizontal volume slider and pan knob per track
-- Real-time level meters (green/yellow/red) that react to playback audio
+- Compact layout: a colour strip, the track name and its type badge (**AUDIO**, **MIDI** or **BUS**) on the first row
+- Second row: Record Arm (R), Solo (S), Mute (M), plus Mono/Stereo, Freeze and Automation toggles
+- Below those: the instrument button (MIDI tracks), the input and output selectors (Master or any bus), and volume and pan sliders
+- Click the ▾ arrow to collapse a track to its name row
+- Real-time level meter (green/yellow/red) that reacts to playback audio
+- Right-click for **Rename**, **Track Colour** and **Split Piano Hands (AI)**
 - **Drag to reorder** — drag track headers up/down to rearrange track order
 - Vertically synchronized with the timeline scroll
 
 ### Mixer (bottom panel)
 
-- Channel strip per track with: vertical volume fader, pan knob, Mute/Solo/Record Arm, level meter
+<div align="center">
+<img src="resources/screenshots/mixer.png" alt="OpenDaw mixer: colour-coded channel strips with input and output selectors, track nameplates, VST instrument selectors, pan knobs, faders with dB scales, dB readouts and M/S/R buttons, and the master strip on the right" width="900">
+</div>
+
+- Channel strip per track: input and output selectors, a nameplate in the track's colour, pan knob, volume fader with dB scale and readout, level meter, Mute / Solo / Record Arm, mono toggle and automation mode (Read / Touch / Latch / Write)
+- Instrument selector and MIDI channel on MIDI track strips
 - Bus channel strips alongside regular tracks
 - Master channel strip on the right
-- Instrument selector on MIDI track channel strips
-- Two FX insert slots per track (quick-add Reverb, EQ, Compressor)
 - Drag channel strips to reorder tracks directly in the mixer
 - Always left-aligned, horizontally scrollable
 
@@ -238,6 +285,12 @@ Add any of these to a track with one click from the Effects panel or mixer FX sl
 | Pitch Shift | Semitone shift |
 
 ### Routing View (bottom panel, tabbed)
+
+<div align="center">
+<img src="resources/routing-view.png" alt="OpenDaw routing view showing input channels, audio tracks, a bus with effects, master output, and color-coded signal cables" width="800">
+<br>
+<em>Signal routing view — drag cables between inputs, tracks, buses, and outputs</em>
+</div>
 
 - Visual node-based signal routing with drag-and-drop cable connections
 - Five column layout: **Input Channels → Tracks → Buses → Master → Output Channels**
@@ -271,7 +324,7 @@ OpenDaw ships with a built-in **AI assistant powered by Anthropic's Claude** tha
 Press **Ctrl+Shift+Space** from anywhere to open the quick prompt overlay, type what you need, and watch it happen.
 
 <div align="center">
-<img src="resources/ai-assistant.png" alt="OpenDaw AI assistant panel showing a conversation where the AI composed jazz MIDI tracks with walking bass and drum patterns" width="400">
+<img src="resources/screenshots/ai-assistant.png" alt="OpenDaw AI assistant panel: the assistant reports writing the woodwind, brass, harp and timpani parts, then summarises the orchestral piece in A minor with a bar-by-bar chord table" width="340">
 <br>
 <em>AI Assistant — describe what you want in plain English and watch it build tracks, compose MIDI, set up routing, and more</em>
 </div>
@@ -422,14 +475,27 @@ The assistant uses **agentic tool use**: when you send a message, it decides whi
 
 - File > New Project -- start fresh with 4 empty audio tracks
 - File > Open Project -- load a `.tracktionedit` file
+- File > Open Recent -- your last 10 projects
 - File > Save / Save As -- save your arrangement
-- File > Export Audio -- mix down to WAV (Ctrl+Shift+E)
+- File > Import Audio (Ctrl+I) / Import MIDI (Ctrl+Shift+I) / Import Video
+- File > Export Audio -- mix down to WAV, FLAC or OGG (Ctrl+Shift+E)
+- Edit > Undo (Ctrl+Z) / Redo (Ctrl+Y), Delete Selected Clips, Select All Clips (Ctrl+A)
 - Edit > Add Audio Track / Add MIDI Track / Remove Selected Track
+- Edit > Split Piano Hands (AI) -- split a piano track into right- and left-hand tracks
+- Edit > Theme -- choose one of 12 colour themes
 - Edit > Audio Settings -- configure audio device, sample rate, buffer size
 - Edit > Scan VST Plugins -- scan for installed VST3 instruments
-- View > Toggle Mixer, Toggle Routing, Toggle Browser, Toggle Effects, Toggle AI Assistant, Toggle Sheet Music, Toggle Piano Roll, Toggle Audio Clip Editor
+- View -- show or hide each panel (Mixer, Routing, Browser, Effects, AI Assistant, Sheet Music, Piano Roll, Audio Clip Editor); a tick shows which are open
+- Panel sizes, positions and window size are remembered between sessions
 - Transport > MIDI Panic (Ctrl+Shift+P) -- silence stuck notes
 - Help > About OpenDaw
+
+### Logs and Crash Reports
+
+- Each run writes `OpenDaw.log`; the previous run's log is kept as `OpenDaw.prev.log`
+- If OpenDaw crashes, it writes a minidump, `OpenDaw-crash.dmp`, plus a crash summary in the log
+- These go next to `OpenDaw.exe` for the portable build, or to `%LOCALAPPDATA%\OpenDaw\OpenDaw` when the program folder isn't writable (the installer's Program Files location)
+- Attach them when you report a bug
 
 ---
 
@@ -541,9 +607,11 @@ c:\qt\6.10.2\msvc2022_64\bin\windeployqt.exe .\build\OpenDaw_artefacts\Debug\Ope
 
 1. **Launch OpenDaw.** The window opens with 4 empty audio tracks, a transport bar at the top, track headers on the left, the timeline in the center, the mixer at the bottom, and the file browser / effects panel tabbed on the right.
 
-2. **Set your tempo.** In the transport bar, adjust the BPM spinner (default 120). Change the time signature with the two spinners next to it (default 4/4).
+2. **Set your tempo.** In the panel beside the position counter, type a new **Tempo** or scroll over it (default 120). Set the **Meter** the same way (default 4/4).
 
-3. **Set your snap mode.** Use the "Snap" dropdown in the transport bar to choose grid resolution: Beat (default), Bar, 1/2 Beat, 1/4 Beat, or Off.
+3. **Set your grid.** Use the **Grid** dropdown in the same panel: 1/4 (default), Bar, 1/2, 1/8, 1/16, 1/32, or Off.
+
+4. **Pick a theme** (optional) from **Edit > Theme**.
 
 ### Adding audio to the timeline
 
@@ -572,17 +640,16 @@ Each track has controls in two places:
 - **S** -- Solo the track (only this track plays)
 - **R** -- Arm for recording
 - **Mono/Stereo** toggle -- switch between mono and stereo processing
+- **Volume** and **Pan** sliders
 - **Input selector** -- choose an audio input device
 - **Output selector** -- route to Master or any bus track
-- **Volume slider** -- horizontal, adjusts track volume
-- **Pan knob** -- drag up/down to pan left/right
 - **Level meter** -- shows real-time audio level (green = good, yellow = hot, red = clipping)
 
 **Mixer panel (bottom):**
 - Same controls in a traditional vertical channel strip layout
-- **Volume fader** -- vertical, drag up/down
+- **Volume fader** -- vertical, drag up/down; the dB readout sits underneath
 - **Pan knob** -- rotary control
-- **FX 1 / FX 2** dropdowns -- quick-add Reverb, EQ, or Compressor
+- **Automation mode** button -- Read, Touch, Latch or Write
 - **Master strip** on the far right -- controls overall output level
 
 ### Routing
@@ -622,10 +689,7 @@ Each track has controls in two places:
 
 ### Adding effects
 
-**Quick method:** In the mixer, use the FX 1 or FX 2 dropdown on any track's channel strip and select Reverb, EQ, or Compressor.
-
-**Full method:**
-1. Click on an FX dropdown in the mixer to open the **Effects** tab in the right panel.
+1. Select a track, then open the **Effects** tab in the right panel.
 2. Click **+ Add Effect** to open the effect selector dialog.
 3. Choose from 8 built-in effects and click OK (or double-click).
 4. The effect appears with parameter knobs. Adjust to taste.
@@ -665,6 +729,9 @@ Each track has controls in two places:
 | R | Record |
 | S | Split clip at playhead |
 | Delete / Backspace | Delete selected clips |
+| I / O | Set loop start / end at the playhead |
+| Ctrl+Z / Ctrl+Y | Undo / Redo |
+| Ctrl+A | Select all clips |
 | Ctrl+T | Add audio track |
 | Ctrl+Shift+T | Add MIDI track |
 | Ctrl+N | New project |
@@ -674,6 +741,8 @@ Each track has controls in two places:
 | Ctrl+C | Copy selected clips |
 | Ctrl+X | Cut selected clips |
 | Ctrl+V | Paste clips at playhead |
+| Ctrl+I | Import audio |
+| Ctrl+Shift+I | Import MIDI |
 | Ctrl+Shift+E | Export audio |
 | Ctrl+Shift+P | MIDI Panic (all notes off) |
 | Ctrl+Q | Quit |
@@ -710,10 +779,8 @@ AudioMixer/
     icon.png                              Application icon (PNG)
     OpenDaw.ico                           Windows application icon
     routing-view.png                      Routing view screenshot
-    piano-roll.png                        Piano roll screenshot
-    sheet-music-view.png                  Sheet music view screenshot
     audio-clip-editor.png                 Audio clip editor screenshot
-    ai-assistant.png                      AI assistant panel screenshot
+    screenshots/                          README screenshots (main window, themes, mixer, piano roll, ...)
     fontaudio.ttf                         Icon font for audio controls
     MaterialSymbolsOutlined.ttf           Material Design icon font
     Bravura.otf                           SMuFL music notation font
@@ -771,7 +838,7 @@ AudioMixer/
         MixerView.h/cpp                   Horizontal mixer panel
         ChannelStrip.h/cpp                Per-track mixer strip with instrument selector
       transport/
-        TransportBar.h/cpp                Play/Stop/Record/Loop/BPM controls
+        TransportBar.h/cpp                Transport buttons, position counter, tempo/meter/grid panel
       controls/
         RotaryKnob.h/cpp                  Custom painted rotary knob
         VolumeFader.h/cpp                 Custom painted vertical fader
@@ -798,9 +865,10 @@ AudioMixer/
       AiChatStore.h/cpp                   Persistent chat sessions (saved alongside project)
       AiQuickPrompt.h/cpp                 Ctrl+Shift+Space overlay prompt
       AiAudioAnalysis.h/cpp               Mix analysis: levels, spectrum, stereo, transients, masking
+      AiHandSplitter.h/cpp                AI piano hand split (assigns each note to a hand)
     utils/
       WaveformCache.h/cpp                 Audio file waveform thumbnail cache
-      ThemeManager.h/cpp                  Dark theme color management
+      ThemeManager.h/cpp                  The 12 colour themes and their track palettes
       IconFont.h                          Icon font registration and glyph constants
 ```
 
