@@ -352,8 +352,7 @@ void EffectChainWidget::rebuild()
     }
 
     for (auto* plugin : plist->getPlugins()) {
-        if (dynamic_cast<te::VolumeAndPanPlugin*>(plugin)) continue;
-        if (dynamic_cast<te::LevelMeterPlugin*>(plugin)) continue;
+        if (EditManager::isInternalPlugin(plugin)) continue;
 
         if (auto* delayPlugin = dynamic_cast<te::DelayPlugin*>(plugin)) {
             auto* delayWidget = new DelayEffectWidget(
@@ -391,14 +390,7 @@ void EffectChainWidget::addEffect(const QString& effectName)
     if (xmlType) {
         auto plugin = cache.createNewPlugin(juce::String(xmlType), {});
         if (plugin) {
-            int insertIndex = plist->size();
-            for (int i = 0; i < plist->size(); ++i) {
-                if (dynamic_cast<te::LevelMeterPlugin*>((*plist)[i])) {
-                    insertIndex = i;
-                    break;
-                }
-            }
-            plist->insertPlugin(plugin, insertIndex, nullptr);
+            plist->insertPlugin(plugin, EditManager::effectInsertIndex(*plist), nullptr);
         }
     }
 
@@ -413,14 +405,7 @@ void EffectChainWidget::addVstEffect(const juce::PluginDescription& desc)
 
     auto pluginState = te::ExternalPlugin::create(editMgr_->edit()->engine, desc);
     if (auto plugin = editMgr_->edit()->getPluginCache().createNewPlugin(pluginState)) {
-        int insertIndex = plist->size();
-        for (int i = 0; i < plist->size(); ++i) {
-            if (dynamic_cast<te::LevelMeterPlugin*>((*plist)[i])) {
-                insertIndex = i;
-                break;
-            }
-        }
-        plist->insertPlugin(plugin, insertIndex, nullptr);
+        plist->insertPlugin(plugin, EditManager::effectInsertIndex(*plist), nullptr);
     }
 
     rebuild();

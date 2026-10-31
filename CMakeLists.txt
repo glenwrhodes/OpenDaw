@@ -89,6 +89,7 @@ set(OpenDaw_SOURCES
     src/ui/timeline/FolderHeaderWidget.h  src/ui/timeline/FolderHeaderWidget.cpp
     src/ui/mixer/MixerView.h        src/ui/mixer/MixerView.cpp
     src/ui/mixer/ChannelStrip.h     src/ui/mixer/ChannelStrip.cpp
+    src/ui/mixer/SendsPanel.h       src/ui/mixer/SendsPanel.cpp
     src/ui/transport/TransportBar.h src/ui/transport/TransportBar.cpp
     src/ui/controls/RotaryKnob.h    src/ui/controls/RotaryKnob.cpp
     src/ui/controls/VolumeFader.h   src/ui/controls/VolumeFader.cpp
@@ -116,6 +117,7 @@ set(OpenDaw_SOURCES
     src/ui/pianoroll/ChannelColors.h
     src/ui/pianoroll/PianoRollRuler.h     src/ui/pianoroll/PianoRollRuler.cpp
     src/ui/routing/RoutingView.h          src/ui/routing/RoutingView.cpp
+    src/ui/routing/RoutingMatrixView.h    src/ui/routing/RoutingMatrixView.cpp
     src/ui/routing/RoutingNode.h          src/ui/routing/RoutingNode.cpp
     src/ui/routing/CableItem.h            src/ui/routing/CableItem.cpp
     src/ui/sheetmusic/SheetMusicView.h    src/ui/sheetmusic/SheetMusicView.cpp

@@ -115,12 +115,60 @@ public:
     te::AudioTrack* getTrackOutputDestination(te::AudioTrack* track) const;
     bool isTrackOutputDisconnected(te::AudioTrack* track) const;
     QString getTrackOutputName(te::AudioTrack* track) const;
+    // Direct outs: a track can skip Master and play straight out of another
+    // hardware output (a cue mix, or one output of a multi-output interface).
+    struct OutputDeviceInfo {
+        juce::String id;
+        QString name;
+        bool isMain = false;   // the device Master plays through
+    };
+    QList<OutputDeviceInfo> getAudioOutputDevices() const;
+    void setTrackOutputToDevice(te::AudioTrack& track, const juce::String& deviceID);
+    // Empty unless the track goes straight to a device other than Master's.
+    juce::String getTrackDirectOutputID(te::AudioTrack* track) const;
+    // Every place a track's output can go, for menus and combo boxes. Keys are
+    // "master", "none", "track:<id>" or "device:<id>".
+    struct OutputChoice {
+        QString label;
+        QString key;
+    };
+    QList<OutputChoice> getOutputChoices(te::AudioTrack* track) const;
+    QString currentOutputKey(te::AudioTrack* track) const;
+    void setTrackOutputByKey(te::AudioTrack& track, const QString& key);
 
     // Bus tracks
     te::AudioTrack* addBusTrack();
     bool isBusTrack(te::AudioTrack* track) const;
     juce::Array<te::AudioTrack*> getBusTracks() const;
     juce::Array<te::AudioTrack*> getNonBusAudioTracks() const;
+    // A bus named after `effectName` with that effect on it, ready to take sends.
+    te::AudioTrack* addFxBus(const QString& effectName);
+
+    // Aux sends: a copy of a track's signal, at its own level, into a bus, while
+    // the track's output keeps going where it goes. Post-fader sends follow the
+    // track's fader; pre-fader sends ignore it.
+    struct SendInfo {
+        te::AudioTrack* bus = nullptr;
+        te::AuxSendPlugin* plugin = nullptr;
+        float gainDb = 0.0f;
+        bool preFader = false;
+        bool muted = false;
+        bool phaseInverted = false;
+    };
+    std::vector<SendInfo> getTrackSends(te::AudioTrack* track) const;
+    bool canSendTo(te::AudioTrack* src, te::AudioTrack* bus) const;
+    te::AuxSendPlugin* addSend(te::AudioTrack& src, te::AudioTrack& bus,
+                               float gainDb = -6.0f, bool preFader = false);
+    void removeSend(te::AudioTrack& src, te::AudioTrack& bus);
+    void setSendGainDb(te::AudioTrack& src, te::AudioTrack& bus, float gainDb);
+    void setSendPreFader(te::AudioTrack& src, te::AudioTrack& bus, bool preFader);
+    void setSendMuted(te::AudioTrack& src, te::AudioTrack& bus, bool muted);
+    void setSendPhaseInverted(te::AudioTrack& src, te::AudioTrack& bus, bool inverted);
+    // Plugins the app manages itself and never lists as effects.
+    static bool isInternalPlugin(te::Plugin* plugin);
+    // Where a new effect goes: after the instrument and other effects, before
+    // the fader, so the fader sets the level without changing the effect's input.
+    static int effectInsertIndex(te::PluginList& list);
 
     // Input device renaming (persisted in edit state)
     void setInputDisplayName(const juce::String& deviceName, const QString& customName);
@@ -238,6 +286,8 @@ signals:
     void tracksChanged();
     void transportStateChanged();
     void routingChanged();
+    // A send level or pre/post setting changed; cheaper than routingChanged.
+    void sendChanged(te::AudioTrack* src, te::AudioTrack* bus);
     void midiClipDoubleClicked(te::MidiClip* clip);
     void midiClipSelected(te::MidiClip* clip);
     void midiClipModified(te::MidiClip* clip);
@@ -259,6 +309,12 @@ private:
 
     void unfreezeAllTracks();
     void cleanupFreezeState(te::AudioTrack& track);
+    void normalizePluginOrder();
+    // Audio-flow edges out of a track: its output bus and the buses it sends to.
+    std::vector<te::AudioTrack*> downstreamTracks(te::AudioTrack* track) const;
+    int auxBusNumberFor(te::AudioTrack& bus);
+    te::AudioTrack* busForAuxNumber(int busNumber) const;
+    te::AuxSendPlugin* findSend(te::AudioTrack& src, te::AudioTrack& bus) const;
     static juce::String sanitizeForFilename(const juce::String& name);
     void performAutosave();
     QString autosaveFileId() const;

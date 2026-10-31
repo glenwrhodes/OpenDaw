@@ -851,42 +851,18 @@ void TrackHeaderWidget::populateOutputCombo()
 
     QSignalBlocker block(outputCombo_);
     outputCombo_->clear();
-    outputCombo_->addItem("Master", QString("__master__"));
+    for (const auto& choice : editMgr_->getOutputChoices(track_))
+        outputCombo_->addItem(choice.label, choice.key);
 
-    auto buses = editMgr_->getBusTracks();
-    for (auto* bus : buses) {
-        QString name = QString::fromStdString(bus->getName().toStdString());
-        QString id = QString::number(bus->itemID.getRawID());
-        outputCombo_->addItem(name, id);
-    }
-
-    if (!track_ || !editMgr_) return;
-    auto* dest = editMgr_->getTrackOutputDestination(track_);
-    if (!dest) {
-        outputCombo_->setCurrentIndex(0);
-    } else {
-        QString destId = QString::number(dest->itemID.getRawID());
-        int idx = outputCombo_->findData(destId);
-        outputCombo_->setCurrentIndex(idx >= 0 ? idx : 0);
-    }
+    if (!track_) return;
+    int idx = outputCombo_->findData(editMgr_->currentOutputKey(track_));
+    outputCombo_->setCurrentIndex(idx >= 0 ? idx : 0);
 }
 
 void TrackHeaderWidget::onOutputComboChanged(int index)
 {
     if (!track_ || !editMgr_ || index < 0) return;
-
-    QString destData = outputCombo_->itemData(index).toString();
-    if (destData == "__master__") {
-        editMgr_->setTrackOutputToMaster(*track_);
-    } else {
-        uint64_t rawId = destData.toULongLong();
-        for (auto* bus : editMgr_->getBusTracks()) {
-            if (bus->itemID.getRawID() == rawId) {
-                editMgr_->setTrackOutputToTrack(*track_, *bus);
-                break;
-            }
-        }
-    }
+    editMgr_->setTrackOutputByKey(*track_, outputCombo_->itemData(index).toString());
 }
 
 void TrackHeaderWidget::onArmToggled(bool armed)

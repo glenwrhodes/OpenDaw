@@ -61,6 +61,7 @@ private:
     void onInputComboChanged(int index);
     void populateOutputCombo();
     void onOutputComboChanged(int index);
+    void updateSendsButton();
     void onArmToggled(bool armed);
     void onMidiChannelChanged(int index);
     void startRenameEdit();
@@ -73,6 +74,7 @@ private:
 
     QComboBox* inputCombo_ = nullptr;
     QComboBox* outputCombo_ = nullptr;
+    QPushButton* sendsBtn_ = nullptr;
     QComboBox* midiChannelCombo_ = nullptr;
     QLabel* nameLabel_ = nullptr;
     QPushButton* instrumentBtn_ = nullptr;

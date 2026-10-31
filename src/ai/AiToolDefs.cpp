@@ -224,6 +224,39 @@ QJsonArray AiToolDefs::allTools()
             props, {"track"}));
     }
 
+    {
+        QJsonObject props;
+        props["track"] = trackProp();
+        props["bus"] = prop("string", "Name of the bus track to send to (it must be a bus).");
+        props["level_db"] = propNumber("Send level in dB (default -6).", -60, 6);
+        props["pre_fader"] = prop("boolean", "True for a pre-fader send, which ignores the track's fader. Default false (post-fader).");
+        tools.append(makeTool("add_send",
+            "Add an aux send: a copy of the track's signal goes into a bus at its own level, while the "
+            "track's output stays where it is. Use for shared reverb/delay buses and parallel processing.",
+            props, {"track", "bus"}));
+    }
+
+    {
+        QJsonObject props;
+        props["track"] = trackProp();
+        props["bus"] = prop("string", "Name of the bus the send goes to.");
+        props["level_db"] = propNumber("New send level in dB.", -60, 6);
+        props["pre_fader"] = prop("boolean", "Pre-fader (true) or post-fader (false).");
+        props["muted"] = prop("boolean", "Mute or unmute the send.");
+        tools.append(makeTool("set_send",
+            "Change an existing aux send: its level, pre/post-fader setting or mute.",
+            props, {"track", "bus"}));
+    }
+
+    {
+        QJsonObject props;
+        props["track"] = trackProp();
+        props["bus"] = prop("string", "Name of the bus the send goes to.");
+        tools.append(makeTool("remove_send",
+            "Remove an aux send from a track to a bus.",
+            props, {"track", "bus"}));
+    }
+
     // ── Effects ─────────────────────────────────────────────────────────────
 
     tools.append(makeTool("list_available_effects",

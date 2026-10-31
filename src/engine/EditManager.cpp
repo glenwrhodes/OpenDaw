@@ -143,6 +143,7 @@ bool EditManager::loadEdit(const juce::File& file)
 
     qDebug() << "[loadEdit] ensuring level meters";
     ensureLevelMetersOnAllTracks();
+    normalizePluginOrder();
     assignMissingTrackColours();
 
     qDebug() << "[loadEdit] detecting MIDI tracks";
@@ -242,8 +243,14 @@ void EditManager::removeTrack(te::Track* track)
     if (!edit_ || !track)
         return;
 
-    if (auto* audioTrack = dynamic_cast<te::AudioTrack*>(track))
+    if (auto* audioTrack = dynamic_cast<te::AudioTrack*>(track)) {
         cleanupFreezeState(*audioTrack);
+        // Sends into a deleted bus would keep feeding an unused aux bus number.
+        if (isBusTrack(audioTrack))
+            for (auto* other : getAudioTracks())
+                if (auto* send = findSend(*other, *audioTrack))
+                    send->deleteFromParent();
+    }
 
     edit_->deleteTrack(track);
     emit tracksChanged();
@@ -621,14 +628,7 @@ void EditManager::setTrackMono(te::AudioTrack& track, bool mono)
         if (!monoPlugin) {
             if (auto p = edit_->getPluginCache().createNewPlugin(
                     juce::String(kMonoUtilityPluginType), {})) {
-                int insertIndex = track.pluginList.size();
-                for (int i = 0; i < track.pluginList.size(); ++i) {
-                    if (dynamic_cast<te::LevelMeterPlugin*>(track.pluginList[i])) {
-                        insertIndex = i;
-                        break;
-                    }
-                }
-                track.pluginList.insertPlugin(p, insertIndex, nullptr);
+                track.pluginList.insertPlugin(p, effectInsertIndex(track.pluginList), nullptr);
                 monoPlugin = p.get();
                 changed = true;
             }
@@ -1161,19 +1161,37 @@ bool EditManager::isTrackRecordEnabled(te::AudioTrack* track) const
 
 // ── Output routing ───────────────────────────────────────────────────────────
 
+std::vector<te::AudioTrack*> EditManager::downstreamTracks(te::AudioTrack* track) const
+{
+    std::vector<te::AudioTrack*> result;
+    if (!track) return result;
+    if (auto* dest = track->getOutput().getDestinationTrack())
+        result.push_back(dest);
+    for (auto* p : track->pluginList.getPlugins())
+        if (auto* send = dynamic_cast<te::AuxSendPlugin*>(p))
+            if (auto* bus = busForAuxNumber(send->getBusNumber()))
+                result.push_back(bus);
+    return result;
+}
+
 bool EditManager::wouldCreateCycle(te::AudioTrack* src, te::AudioTrack* dest) const
 {
     if (!src || !dest) return false;
     if (src == dest) return true;
 
+    // Feeding dest from src closes a loop if audio already flows from dest to
+    // src, through outputs or sends.
     std::unordered_set<uint64_t> visited;
-    visited.insert(src->itemID.getRawID());
-    auto* current = dest;
-    while (current) {
-        if (visited.count(current->itemID.getRawID()))
+    std::vector<te::AudioTrack*> pending { dest };
+    while (!pending.empty()) {
+        auto* current = pending.back();
+        pending.pop_back();
+        if (current == src)
             return true;
-        visited.insert(current->itemID.getRawID());
-        current = current->getOutput().getDestinationTrack();
+        if (!visited.insert(current->itemID.getRawID()).second)
+            continue;
+        for (auto* next : downstreamTracks(current))
+            pending.push_back(next);
     }
     return false;
 }
@@ -1224,6 +1242,93 @@ bool EditManager::isTrackOutputDisconnected(te::AudioTrack* track) const
     return track->state.getProperty(juce::Identifier("outputDisconnected"), false);
 }
 
+QList<EditManager::OutputDeviceInfo> EditManager::getAudioOutputDevices() const
+{
+    QList<OutputDeviceInfo> result;
+    auto& dm = audioEngine_.engine().getDeviceManager();
+    const auto mainID = dm.getDefaultWaveOutDeviceID();
+    for (int i = 0; i < dm.getNumWaveOutDevices(); ++i) {
+        if (auto* dev = dm.getWaveOutDevice(i)) {
+            if (!dev->isEnabled()) continue;
+            OutputDeviceInfo info;
+            info.id = dev->getDeviceID();
+            info.name = QString::fromStdString(dev->getName().toStdString());
+            info.isMain = info.id == mainID;
+            result.append(info);
+        }
+    }
+    return result;
+}
+
+void EditManager::setTrackOutputToDevice(te::AudioTrack& track, const juce::String& deviceID)
+{
+    if (!edit_) return;
+    track.state.setProperty(juce::Identifier("outputDisconnected"), false,
+                            &edit_->getUndoManager());
+    track.getOutput().setOutputToDeviceID(deviceID);
+    emit routingChanged();
+    markDirtyAndNotify();
+}
+
+juce::String EditManager::getTrackDirectOutputID(te::AudioTrack* track) const
+{
+    if (!track || isTrackOutputDisconnected(track)) return {};
+    auto& out = track->getOutput();
+    if (out.getDestinationTrack() || out.usesDefaultAudioOut()) return {};
+    if (auto* dev = out.getOutputDevice(false)) {
+        // Master's own device by ID still gets Master's processing.
+        if (dev->getDeviceID() != audioEngine_.engine().getDeviceManager().getDefaultWaveOutDeviceID())
+            return dev->getDeviceID();
+    }
+    return {};
+}
+
+QList<EditManager::OutputChoice> EditManager::getOutputChoices(te::AudioTrack* track) const
+{
+    QList<OutputChoice> choices;
+    choices.append(OutputChoice{ "Master", "master" });
+    for (auto* bus : getBusTracks()) {
+        if (track && (bus == track || wouldCreateCycle(track, bus))) continue;
+        choices.append(OutputChoice{ QString::fromStdString(bus->getName().toStdString()),
+                         "track:" + QString::number(bus->itemID.getRawID()) });
+    }
+    for (const auto& dev : getAudioOutputDevices()) {
+        if (dev.isMain) continue;
+        choices.append(OutputChoice{ "Direct: " + dev.name,
+                         "device:" + QString::fromStdString(dev.id.toStdString()) });
+    }
+    choices.append(OutputChoice{ "No Output", "none" });
+    return choices;
+}
+
+QString EditManager::currentOutputKey(te::AudioTrack* track) const
+{
+    if (!track) return "master";
+    if (isTrackOutputDisconnected(track)) return "none";
+    if (auto* dest = getTrackOutputDestination(track))
+        return "track:" + QString::number(dest->itemID.getRawID());
+    const auto direct = getTrackDirectOutputID(track);
+    if (direct.isNotEmpty())
+        return "device:" + QString::fromStdString(direct.toStdString());
+    return "master";
+}
+
+void EditManager::setTrackOutputByKey(te::AudioTrack& track, const QString& key)
+{
+    if (key == "master") {
+        setTrackOutputToMaster(track);
+    } else if (key == "none") {
+        clearTrackOutput(track);
+    } else if (key.startsWith("track:")) {
+        const uint64_t id = key.mid(6).toULongLong();
+        for (auto* bus : getBusTracks())
+            if (bus->itemID.getRawID() == id)
+                setTrackOutputToTrack(track, *bus);
+    } else if (key.startsWith("device:")) {
+        setTrackOutputToDevice(track, juce::String(key.mid(7).toStdString()));
+    }
+}
+
 QString EditManager::getTrackOutputName(te::AudioTrack* track) const
 {
     if (!track) return {};
@@ -1268,6 +1373,297 @@ juce::Array<te::AudioTrack*> EditManager::getNonBusAudioTracks() const
         if (!isBusTrack(track))
             result.add(track);
     return result;
+}
+
+te::AudioTrack* EditManager::addFxBus(const QString& effectName)
+{
+    if (!edit_) return nullptr;
+
+    const char* xmlType = nullptr;
+    if (effectName == "Reverb")      xmlType = te::ReverbPlugin::xmlTypeName;
+    else if (effectName == "Delay")  xmlType = te::DelayPlugin::xmlTypeName;
+    else if (effectName == "Chorus") xmlType = te::ChorusPlugin::xmlTypeName;
+    else if (effectName == "Phaser") xmlType = te::PhaserPlugin::xmlTypeName;
+
+    auto& um = edit_->getUndoManager();
+    um.beginNewTransaction("Add " + juce::String(effectName.toStdString()) + " Bus");
+
+    auto* bus = addBusTrack();
+    if (!bus) return nullptr;
+
+    QString name = effectName;
+    for (int n = 2;; ++n) {
+        bool taken = false;
+        for (auto* t : getAudioTracks())
+            if (t != bus && QString::fromStdString(t->getName().toStdString()) == name)
+                taken = true;
+        if (!taken) break;
+        name = effectName + " " + QString::number(n);
+    }
+    bus->setName(juce::String(name.toStdString()));
+
+    if (xmlType) {
+        if (auto plugin = edit_->getPluginCache().createNewPlugin(juce::String(xmlType), {})) {
+            // A send bus carries only the effect; the dry signal stays on the source track.
+            if (auto* reverb = dynamic_cast<te::ReverbPlugin*>(plugin.get())) {
+                reverb->setDry(0.0f);
+                reverb->setRoomSize(0.7f);
+            } else if (auto* delay = dynamic_cast<te::DelayPlugin*>(plugin.get())) {
+                delay->mixProportion->setParameter(1.0f, juce::sendNotification);
+            } else if (auto* chorus = dynamic_cast<te::ChorusPlugin*>(plugin.get())) {
+                chorus->mixProportion = 1.0f;
+            }
+            bus->pluginList.insertPlugin(plugin, effectInsertIndex(bus->pluginList), nullptr);
+        }
+    }
+    auxBusNumberFor(*bus);
+
+    emit tracksChanged();
+    emit routingChanged();
+    markDirtyAndNotify();
+    return bus;
+}
+
+// ── Aux sends ────────────────────────────────────────────────────────────────
+
+namespace {
+const juce::Identifier kAuxBusNumberProp("auxBusNumber");
+constexpr int kMaxAuxBuses = 32;
+}
+
+bool EditManager::isInternalPlugin(te::Plugin* plugin)
+{
+    return dynamic_cast<te::VolumeAndPanPlugin*>(plugin)
+        || dynamic_cast<te::LevelMeterPlugin*>(plugin)
+        || dynamic_cast<te::AuxSendPlugin*>(plugin)
+        || dynamic_cast<te::AuxReturnPlugin*>(plugin);
+}
+
+int EditManager::effectInsertIndex(te::PluginList& list)
+{
+    // The fader, the meter and any pre-fader sends sit after the effects.
+    for (int i = 0; i < list.size(); ++i) {
+        auto* p = list[i];
+        if (dynamic_cast<te::VolumeAndPanPlugin*>(p) || dynamic_cast<te::LevelMeterPlugin*>(p)
+            || dynamic_cast<te::AuxSendPlugin*>(p))
+            return i;
+    }
+    return list.size();
+}
+
+te::AudioTrack* EditManager::busForAuxNumber(int busNumber) const
+{
+    if (busNumber < 0) return nullptr;
+    for (auto* bus : getBusTracks())
+        if (static_cast<int>(bus->state.getProperty(kAuxBusNumberProp, -1)) == busNumber)
+            return bus;
+    return nullptr;
+}
+
+int EditManager::auxBusNumberFor(te::AudioTrack& bus)
+{
+    if (!edit_ || !isBusTrack(&bus)) return -1;
+    auto& um = edit_->getUndoManager();
+
+    int number = bus.state.getProperty(kAuxBusNumberProp, -1);
+    if (number < 0 || busForAuxNumber(number) != &bus) {
+        std::unordered_set<int> used;
+        for (auto* other : getAudioTracks()) {
+            if (other == &bus) continue;
+            int n = other->state.getProperty(kAuxBusNumberProp, -1);
+            if (n >= 0) used.insert(n);
+            for (auto* p : other->pluginList.getPlugins())
+                if (auto* ret = dynamic_cast<te::AuxReturnPlugin*>(p))
+                    used.insert(ret->busNumber.get());
+        }
+        number = -1;
+        for (int n = 0; n < kMaxAuxBuses; ++n)
+            if (!used.count(n)) { number = n; break; }
+        if (number < 0) return -1;
+        bus.state.setProperty(kAuxBusNumberProp, number, &um);
+    }
+
+    te::AuxReturnPlugin* ret = nullptr;
+    for (auto* p : bus.pluginList.getPlugins())
+        if (auto* r = dynamic_cast<te::AuxReturnPlugin*>(p))
+            if (r->busNumber.get() == number) { ret = r; break; }
+    if (!ret) {
+        if (auto plugin = edit_->getPluginCache().createNewPlugin(
+                juce::String(te::AuxReturnPlugin::xmlTypeName), {})) {
+            if (auto* r = dynamic_cast<te::AuxReturnPlugin*>(plugin.get())) {
+                r->busNumber = number;
+                // First in the chain, so the bus's effects process what arrives.
+                bus.pluginList.insertPlugin(plugin, 0, nullptr);
+            }
+        }
+    }
+    edit_->setAuxBusName(number, bus.getName());
+    return number;
+}
+
+te::AuxSendPlugin* EditManager::findSend(te::AudioTrack& src, te::AudioTrack& bus) const
+{
+    int number = bus.state.getProperty(kAuxBusNumberProp, -1);
+    if (number < 0 || busForAuxNumber(number) != &bus) return nullptr;
+    for (auto* p : src.pluginList.getPlugins())
+        if (auto* send = dynamic_cast<te::AuxSendPlugin*>(p))
+            if (send->getBusNumber() == number)
+                return send;
+    return nullptr;
+}
+
+std::vector<EditManager::SendInfo> EditManager::getTrackSends(te::AudioTrack* track) const
+{
+    std::vector<SendInfo> result;
+    if (!track) return result;
+    bool pastFader = false;
+    for (auto* p : track->pluginList.getPlugins()) {
+        if (dynamic_cast<te::VolumeAndPanPlugin*>(p)) { pastFader = true; continue; }
+        auto* send = dynamic_cast<te::AuxSendPlugin*>(p);
+        if (!send) continue;
+        if (auto* bus = busForAuxNumber(send->getBusNumber())) {
+            SendInfo info;
+            info.bus = bus;
+            info.plugin = send;
+            info.gainDb = send->getGainDb();
+            info.preFader = !pastFader;
+            info.muted = !send->isEnabled();
+            info.phaseInverted = send->invertPhase.get();
+            result.push_back(info);
+        }
+    }
+    return result;
+}
+
+bool EditManager::canSendTo(te::AudioTrack* src, te::AudioTrack* bus) const
+{
+    if (!edit_ || !src || !bus || src == bus || !isBusTrack(bus)) return false;
+    return !wouldCreateCycle(src, bus);
+}
+
+te::AuxSendPlugin* EditManager::addSend(te::AudioTrack& src, te::AudioTrack& bus,
+                                        float gainDb, bool preFader)
+{
+    if (!canSendTo(&src, &bus)) return nullptr;
+    if (auto* existing = findSend(src, bus)) return existing;
+
+    auto& um = edit_->getUndoManager();
+    um.beginNewTransaction("Add Send");
+    int number = auxBusNumberFor(bus);
+    if (number < 0) return nullptr;
+
+    auto plugin = edit_->getPluginCache().createNewPlugin(
+        juce::String(te::AuxSendPlugin::xmlTypeName), {});
+    auto* send = dynamic_cast<te::AuxSendPlugin*>(plugin.get());
+    if (!send) return nullptr;
+    send->busNumber = number;
+    send->setGainDb(gainDb);
+
+    // Pre-fader: just before the fader. Post-fader: just after it.
+    int index = src.pluginList.size();
+    for (int i = 0; i < src.pluginList.size(); ++i) {
+        if (dynamic_cast<te::VolumeAndPanPlugin*>(src.pluginList[i])) {
+            index = preFader ? i : i + 1;
+            break;
+        }
+        if (dynamic_cast<te::LevelMeterPlugin*>(src.pluginList[i])) {
+            index = i;
+            break;
+        }
+    }
+    src.pluginList.insertPlugin(plugin, index, nullptr);
+
+    emit routingChanged();
+    markDirtyAndNotify();
+    return send;
+}
+
+void EditManager::removeSend(te::AudioTrack& src, te::AudioTrack& bus)
+{
+    if (!edit_) return;
+    auto* send = findSend(src, bus);
+    if (!send) return;
+    edit_->getUndoManager().beginNewTransaction("Remove Send");
+    send->deleteFromParent();
+    emit routingChanged();
+    markDirtyAndNotify();
+}
+
+void EditManager::setSendGainDb(te::AudioTrack& src, te::AudioTrack& bus, float gainDb)
+{
+    auto* send = findSend(src, bus);
+    if (!send) return;
+    send->setGainDb(juce::jlimit(-60.0f, 6.0f, gainDb));
+    hasUnsavedChanges_ = true;
+    emit sendChanged(&src, &bus);
+}
+
+void EditManager::setSendPreFader(te::AudioTrack& src, te::AudioTrack& bus, bool preFader)
+{
+    if (!edit_) return;
+    auto* send = findSend(src, bus);
+    if (!send) return;
+
+    auto sends = getTrackSends(&src);
+    auto it = std::find_if(sends.begin(), sends.end(),
+                           [send](const SendInfo& s) { return s.plugin == send; });
+    if (it == sends.end() || it->preFader == preFader) return;
+
+    // Move the send's state to the other side of the fader.
+    te::Plugin* fader = nullptr;
+    for (auto* p : src.pluginList.getPlugins())
+        if (dynamic_cast<te::VolumeAndPanPlugin*>(p)) { fader = p; break; }
+    if (!fader) return;
+
+    auto& um = edit_->getUndoManager();
+    um.beginNewTransaction(preFader ? "Make Send Pre-Fader" : "Make Send Post-Fader");
+    // Moving to the fader's index lands just after it when coming from before
+    // (the fader shifts down) and just before it when coming from after.
+    auto parent = send->state.getParent();
+    parent.moveChild(parent.indexOf(send->state), parent.indexOf(fader->state), &um);
+
+    hasUnsavedChanges_ = true;
+    emit sendChanged(&src, &bus);
+}
+
+void EditManager::setSendMuted(te::AudioTrack& src, te::AudioTrack& bus, bool muted)
+{
+    if (!edit_) return;
+    auto* send = findSend(src, bus);
+    if (!send || send->isEnabled() == !muted) return;
+    edit_->getUndoManager().beginNewTransaction(muted ? "Mute Send" : "Unmute Send");
+    // A disabled send is left out of the playback graph; its level is kept.
+    send->setEnabled(!muted);
+    hasUnsavedChanges_ = true;
+    emit sendChanged(&src, &bus);
+}
+
+void EditManager::setSendPhaseInverted(te::AudioTrack& src, te::AudioTrack& bus, bool inverted)
+{
+    if (!edit_) return;
+    auto* send = findSend(src, bus);
+    if (!send || send->invertPhase.get() == inverted) return;
+    edit_->getUndoManager().beginNewTransaction("Invert Send Phase");
+    send->invertPhase = inverted;
+    hasUnsavedChanges_ = true;
+    emit sendChanged(&src, &bus);
+}
+
+void EditManager::normalizePluginOrder()
+{
+    // Older projects put new effects after the fader, so moving the fader also
+    // changed how hard a compressor worked. Put the fader after the effects.
+    for (auto* track : getAudioTracks()) {
+        te::Plugin* fader = nullptr;
+        te::Plugin* lastEffect = nullptr;
+        for (auto* p : track->pluginList.getPlugins()) {
+            if (dynamic_cast<te::VolumeAndPanPlugin*>(p)) fader = p;
+            else if (fader && !isInternalPlugin(p)) lastEffect = p;
+        }
+        if (!fader || !lastEffect) continue;
+        auto parent = fader->state.getParent();
+        parent.moveChild(parent.indexOf(fader->state), parent.indexOf(lastEffect->state), nullptr);
+    }
 }
 
 // ── Input device renaming ────────────────────────────────────────────────────
@@ -2049,6 +2445,7 @@ void EditManager::freezeTrack(te::AudioTrack& track)
     for (auto* plugin : track.pluginList.getPlugins()) {
         if (dynamic_cast<te::VolumeAndPanPlugin*>(plugin)) continue;
         if (dynamic_cast<te::LevelMeterPlugin*>(plugin)) continue;
+        if (dynamic_cast<te::AuxSendPlugin*>(plugin)) continue;   // sends keep feeding their bus
         if (plugin->isEnabled()) {
             state.disabledPluginIds.push_back(plugin->itemID);
             plugin->setEnabled(false);
@@ -2180,6 +2577,7 @@ bool EditManager::bounceTrackToAudio(te::AudioTrack& track)
         auto* plugin = track.pluginList[i];
         if (dynamic_cast<te::VolumeAndPanPlugin*>(plugin)) continue;
         if (dynamic_cast<te::LevelMeterPlugin*>(plugin)) continue;
+        if (dynamic_cast<te::AuxSendPlugin*>(plugin)) continue;   // sends keep feeding their bus
         plugin->deleteFromParent();
     }
 

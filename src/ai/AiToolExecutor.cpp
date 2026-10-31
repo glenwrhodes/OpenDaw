@@ -62,8 +62,7 @@ QVector<te::Plugin*> AiToolExecutor::getUserPlugins(te::AudioTrack* track) const
     QVector<te::Plugin*> result;
     if (!track) return result;
     for (auto* p : track->pluginList.getPlugins()) {
-        if (dynamic_cast<te::VolumeAndPanPlugin*>(p)) continue;
-        if (dynamic_cast<te::LevelMeterPlugin*>(p)) continue;
+        if (EditManager::isInternalPlugin(p)) continue;
         result.append(p);
     }
     return result;
@@ -196,8 +195,7 @@ static QJsonObject trackToDetailedJson(EditManager* mgr, te::AudioTrack* t, int 
 
     QJsonArray effectsArr;
     for (auto* p : t->pluginList.getPlugins()) {
-        if (dynamic_cast<te::VolumeAndPanPlugin*>(p)) continue;
-        if (dynamic_cast<te::LevelMeterPlugin*>(p)) continue;
+        if (EditManager::isInternalPlugin(p)) continue;
 
         QJsonObject fxObj;
         fxObj["name"] = QString::fromStdString(p->getName().toStdString());
@@ -214,6 +212,18 @@ static QJsonObject trackToDetailedJson(EditManager* mgr, te::AudioTrack* t, int 
         effectsArr.append(fxObj);
     }
     obj["effects"] = effectsArr;
+
+    obj["output"] = mgr->currentOutputKey(t);
+    QJsonArray sendsArr;
+    for (const auto& send : mgr->getTrackSends(t)) {
+        QJsonObject s;
+        s["bus"] = QString::fromStdString(send.bus->getName().toStdString());
+        s["level_db"] = std::round(send.gainDb * 10.0f) / 10.0f;
+        s["pre_fader"] = send.preFader;
+        s["muted"] = send.muted;
+        sendsArr.append(s);
+    }
+    obj["sends"] = sendsArr;
     return obj;
 }
 
@@ -268,7 +278,7 @@ static te::Plugin* ensureBuiltInEffect(EditManager* editMgr, te::AudioTrack* tra
     auto plugin = editMgr->edit()->getPluginCache().createNewPlugin(juce::String(xmlType), {});
     if (!plugin) return nullptr;
     auto* raw = plugin.get();
-    track->pluginList.insertPlugin(plugin, -1, nullptr);
+    track->pluginList.insertPlugin(plugin, EditManager::effectInsertIndex(track->pluginList), nullptr);
     return raw;
 }
 
@@ -508,6 +518,55 @@ void AiToolExecutor::registerHandlers()
                       .arg(QString::fromStdString(track->getName().toStdString())));
     };
 
+    auto resolveBus = [this](const QJsonValue& ref) -> te::AudioTrack* {
+        auto* bus = resolveTrack(ref);
+        return bus && editMgr_->isBusTrack(bus) ? bus : nullptr;
+    };
+
+    handlers_["add_send"] = [this, resolveBus](const QJsonObject& input, const QString& id) -> AiToolResult {
+        auto* track = resolveTrack(input["track"]);
+        if (!track) return err(id, "Track not found.");
+        auto* bus = resolveBus(input["bus"]);
+        if (!bus) return err(id, "Bus not found. Sends go to bus tracks; create one first.");
+        if (!editMgr_->canSendTo(track, bus))
+            return err(id, "That send would feed the bus back into itself.");
+        const float db = static_cast<float>(input["level_db"].toDouble(-6.0));
+        if (!editMgr_->addSend(*track, *bus, db, input["pre_fader"].toBool(false)))
+            return err(id, "Could not add the send (all 32 aux buses may be in use).");
+        return ok(id, QString("Added a send from '%1' to '%2' at %3 dB.")
+                      .arg(QString::fromStdString(track->getName().toStdString()),
+                           QString::fromStdString(bus->getName().toStdString()))
+                      .arg(db, 0, 'f', 1));
+    };
+
+    handlers_["set_send"] = [this, resolveBus](const QJsonObject& input, const QString& id) -> AiToolResult {
+        auto* track = resolveTrack(input["track"]);
+        auto* bus = resolveBus(input["bus"]);
+        if (!track || !bus) return err(id, "Track or bus not found.");
+        bool found = false;
+        for (const auto& s : editMgr_->getTrackSends(track))
+            if (s.bus == bus) found = true;
+        if (!found) return err(id, "That track has no send to that bus. Use add_send.");
+        if (input.contains("level_db")) {
+            if (editMgr_->edit())
+                editMgr_->edit()->getUndoManager().beginNewTransaction("Send Level");
+            editMgr_->setSendGainDb(*track, *bus, static_cast<float>(input["level_db"].toDouble()));
+        }
+        if (input.contains("pre_fader"))
+            editMgr_->setSendPreFader(*track, *bus, input["pre_fader"].toBool());
+        if (input.contains("muted"))
+            editMgr_->setSendMuted(*track, *bus, input["muted"].toBool());
+        return ok(id, "Send updated.");
+    };
+
+    handlers_["remove_send"] = [this, resolveBus](const QJsonObject& input, const QString& id) -> AiToolResult {
+        auto* track = resolveTrack(input["track"]);
+        auto* bus = resolveBus(input["bus"]);
+        if (!track || !bus) return err(id, "Track or bus not found.");
+        editMgr_->removeSend(*track, *bus);
+        return ok(id, "Send removed.");
+    };
+
     // ── Effects ─────────────────────────────────────────────────────────────
 
     handlers_["list_available_effects"] = [this](const QJsonObject&, const QString& id) -> AiToolResult {
@@ -573,7 +632,7 @@ void AiToolExecutor::registerHandlers()
         auto plugin = cache.createNewPlugin(juce::String(xmlType), {});
         if (!plugin) return err(id, "Failed to create effect plugin.");
 
-        track->pluginList.insertPlugin(plugin, -1, nullptr);
+        track->pluginList.insertPlugin(plugin, EditManager::effectInsertIndex(track->pluginList), nullptr);
         emitEditChanged();
         return ok(id, QString("Added '%1' to track '%2'.")
                       .arg(effectName, QString::fromStdString(track->getName().toStdString())));
@@ -1456,7 +1515,7 @@ bool AiToolExecutor::isDestructive(const QString& toolName) const
     static const QSet<QString> destructive = {
         "delete_track", "remove_effect_from_track",
         "clear_track_output", "clear_track_input",
-        "set_track_output",
+        "set_track_output", "remove_send",
         "undo", "redo", "revert_last_mix_stage"
     };
     return destructive.contains(toolName);

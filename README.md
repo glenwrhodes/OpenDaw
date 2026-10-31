@@ -262,7 +262,7 @@ Recorded a piano part onto one track? **Split Piano Hands (AI)** separates it in
 <img src="resources/screenshots/mixer.png" alt="OpenDaw mixer: colour-coded channel strips with input and output selectors, track nameplates, VST instrument selectors, pan knobs, faders with dB scales, dB readouts and M/S/R buttons, and the master strip on the right" width="900">
 </div>
 
-- Channel strip per track: input and output selectors, a nameplate in the track's colour, pan knob, volume fader with dB scale and readout, level meter, Mute / Solo / Record Arm, mono toggle and automation mode (Read / Touch / Latch / Write)
+- Channel strip per track: input and output selectors, a Sends button for aux sends, a nameplate in the track's colour, pan knob, volume fader with dB scale and readout, level meter, Mute / Solo / Record Arm, mono toggle and automation mode (Read / Touch / Latch / Write)
 - Instrument selector and MIDI channel on MIDI track strips
 - Bus channel strips alongside regular tracks
 - Master channel strip on the right
@@ -284,25 +284,30 @@ Add any of these to a track with one click from the Effects panel or mixer FX sl
 | Low Pass Filter | Cutoff frequency |
 | Pitch Shift | Semitone shift |
 
-### Routing View (bottom panel, tabbed)
+### Routing (bottom panel, tabbed)
 
 <div align="center">
-<img src="resources/routing-view.png" alt="OpenDaw routing view showing input channels, audio tracks, a bus with effects, master output, and color-coded signal cables" width="800">
+<img src="resources/screenshots/routing-graph.png" alt="OpenDaw routing graph: input channels, tracks with OUT and SEND jacks, a Reverb effects bus fed by two dashed send cables labelled -3.0 dB and -6.0 dB, the Master node, and three hardware outputs with the main one badged MAIN" width="900">
 <br>
-<em>Signal routing view — drag cables between inputs, tracks, buses, and outputs</em>
+<em>Graph view: dashed cables are aux sends, labelled with their level</em>
+<br><br>
+<img src="resources/screenshots/routing-matrix.png" alt="OpenDaw routing matrix: one row per track, OUTPUT TO columns for Master, buses, hardware outputs and None with a dot on each track's current output, and SEND TO columns showing send levels" width="620">
+<br>
+<em>Matrix view: patch many tracks at once</em>
 </div>
 
-- Visual node-based signal routing with drag-and-drop cable connections
-- Five column layout: **Input Channels → Tracks → Buses → Master → Output Channels**
-- Color-coded cables show signal flow at a glance
-- **Bus tracks** — create buses to submix groups of tracks, with independent effects processing
-- Route any track's output to Master or to a bus
-- Sidechain input support on bus tracks with per-effect sidechain source selector
-- Rename input devices with custom labels
-- Auto-layout button or freely drag nodes to arrange the view
-- Right-click cables to disconnect; right-click empty space to add buses
-- Node positions persist across sessions
-- Zoom and pan navigation
+- **Aux sends** — send a copy of any track or bus into a bus at its own level while its output keeps going where it goes: shared reverbs and delays, parallel compression, headphone mixes. Each send has a level (-60 to +6 dB), **pre/post-fader**, **mute** and **phase invert**
+- **Effects buses** — one click creates a Reverb, Delay, Chorus or Phaser bus with the effect fully wet, ready for sends
+- **Subgroup buses** — route tracks into a bus to process and level them together; buses can feed other buses
+- **Direct hardware outputs** — play a track straight out of another output of your interface, skipping Master (cue mixes, outboard gear)
+- **Sidechain keys** — drop a track's OUT on a compressor's SC jack
+- **Feedback-loop protection** — connections that would feed a bus back into itself are refused, through outputs and sends alike
+- **Graph view**: drag **OUT** to route, drag **SEND** to add a send. While you drag, inputs that can't take the cable dim and a label says what letting go will do. Drop on empty space to create a new bus or effects bus right there. Grab a plugged-in cable end to move it, or pull it away to unplug it. Scroll over a send to change its level; double-click it for all of that track's sends
+- **Live signal flow**: each node shows its level, and cables carrying audio pulse while it plays. Muted (or soloed-out) tracks grey out
+- **Mute and solo on every node**, plus a right-click menu for output, input, sends, effects, rename and delete. Select several tracks and right-click to route them all into a new bus or send them all to a bus
+- **Matrix view**: one row per track, columns for every output and every bus. Click a dot to change an output; click under **SEND TO** to add a send, then drag or scroll it to set the level
+- **Sends in the mixer** — each channel strip has a Sends button that opens the same send controls
+- Node positions are saved with the project; Auto Layout and Zoom to Fit tidy the view
 
 ### Effects Panel (right panel, tabbed)
 
@@ -377,7 +382,7 @@ The AI inspects the current reverb parameters, understands that "longer" means i
 
 Building complex routing by dragging cables is powerful but slow. The AI handles it conversationally:
 
-> *"Create a bus called 'Reverb Send' and route tracks 1, 2, and 5 to it."*
+> *"Create a bus called 'Room', put a reverb on it, and send tracks 1, 2 and 5 to it at -8 dB."*
 
 > *"Move the bass and kick drum to a new 'Low End' bus."*
 
@@ -642,7 +647,7 @@ Each track has controls in two places:
 - **Mono/Stereo** toggle -- switch between mono and stereo processing
 - **Volume** and **Pan** sliders
 - **Input selector** -- choose an audio input device
-- **Output selector** -- route to Master or any bus track
+- **Output selector** -- route to Master, a bus, a direct hardware output, or nowhere
 - **Level meter** -- shows real-time audio level (green = good, yellow = hot, red = clipping)
 
 **Mixer panel (bottom):**
@@ -654,13 +659,14 @@ Each track has controls in two places:
 
 ### Routing
 
-1. Switch to the **Routing** tab (tabbed alongside the Mixer, Piano Roll, Audio Clip, and Sheet Music at the bottom).
-2. The view shows your signal chain as draggable nodes: input channels on the left, tracks in the middle, buses and master on the right, and output channels on the far right.
-3. **Create a bus** by clicking the "+ Add Bus" button in the toolbar, or right-click empty space and select "Add Bus".
-4. **Connect tracks to a bus** by dragging a cable from a track's OUT jack to a bus's IN jack, or use the output selector dropdown on the track header.
-5. **Add effects to a bus** using the Effects panel — select the bus track first, then add effects.
-6. **Rearrange nodes** by dragging them freely. Click "Auto Layout" to reset positions.
-7. **Remove a cable** by right-clicking it and selecting "Disconnect".
+1. Switch to the **Routing** tab (tabbed alongside the Mixer, Piano Roll, Audio Clip, and Sheet Music at the bottom). **Graph** and **Matrix** at the left of its toolbar switch between the two views.
+2. The graph shows your signal chain as draggable nodes: input channels on the left, then tracks, buses, Master, and your hardware outputs on the right.
+3. **Group tracks into a bus**: click **+ Bus**, then drag each track's **OUT** jack onto the bus's **IN** jack. Or select several tracks, right-click one and choose "Route Selected into a New Bus".
+4. **Share a reverb**: click **+ Effects Bus > Reverb Bus**, then drag each track's **SEND** jack onto the Reverb bus's **IN**. Or drag a SEND onto empty space and pick "Send to a New Reverb Bus". Scroll over a send's label to set its level; right-click it for pre/post-fader, mute and phase.
+5. **Move or remove a connection** by grabbing the cable at its plugged-in end: drop it on another input to move it, or on empty space to unplug it. Pressing Delete with a cable clicked also removes it.
+6. **Play a track straight out of another output** (for a cue mix) by dragging its OUT onto that output's node.
+7. In the **Matrix**, click a dot to change a track's output, and click under **SEND TO** to add a send. Then drag up or down on it, or scroll, to set its level.
+8. **Add effects to a bus** like any track: select it, then add effects in the Effects panel.
 
 ### Working with MIDI
 
@@ -778,7 +784,6 @@ AudioMixer/
     splash.png                            Splash screen artwork
     icon.png                              Application icon (PNG)
     OpenDaw.ico                           Windows application icon
-    routing-view.png                      Routing view screenshot
     audio-clip-editor.png                 Audio clip editor screenshot
     screenshots/                          README screenshots (main window, themes, mixer, piano roll, ...)
     fontaudio.ttf                         Icon font for audio controls
@@ -837,6 +842,7 @@ AudioMixer/
       mixer/
         MixerView.h/cpp                   Horizontal mixer panel
         ChannelStrip.h/cpp                Per-track mixer strip with instrument selector
+        SendsPanel.h/cpp                  Popup for a track's aux sends (level, pre/post, mute, phase)
       transport/
         TransportBar.h/cpp                Transport buttons, position counter, tempo/meter/grid panel
       controls/
@@ -851,9 +857,10 @@ AudioMixer/
         PluginEditorWindow.h/cpp          Native VST plugin editor window
         VstSelectorDialog.h/cpp           Searchable VST instrument selector
       routing/
-        RoutingView.h/cpp                 Node-based signal routing view
+        RoutingView.h/cpp                 Routing graph: nodes, cables, sends, live signal flow
+        RoutingMatrixView.h/cpp           Routing matrix: outputs and sends as a grid
         RoutingNode.h/cpp                 Draggable routing node (input/track/bus/master/output)
-        CableItem.h/cpp                   Color-coded cable connecting jacks
+        CableItem.h/cpp                   Cable between jacks (output, send, sidechain)
       browser/
         FileBrowserPanel.h/cpp            File system browser with drag support
     ai/

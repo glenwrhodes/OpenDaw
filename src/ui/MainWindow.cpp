@@ -914,6 +914,13 @@ void MainWindow::createDocks()
                 }
             });
 
+    connect(routingView_, &RoutingView::audioSettingsRequested, this, [this]() {
+        AudioSettingsDialog dlg(app_.audioEngine(), this);
+        dlg.exec();
+        updateStatusBar();
+        emit editMgr_.routingChanged();   // the outputs on offer may have changed
+    });
+
     connect(routingView_, &RoutingView::masterSelected,
             this, [this]() {
                 if (timelineView_)

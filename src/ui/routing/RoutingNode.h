@@ -27,6 +27,8 @@ public:
 
     void setConnected(bool c, const QColor& cableColor = Qt::black);
     void setHighlighted(bool h);
+    // Faded while a cable is being dragged and this jack can't take it.
+    void setDimmed(bool d);
 
 protected:
     void paint(QPainter* painter, const QStyleOptionGraphicsItem* option,
@@ -38,6 +40,7 @@ private:
     RoutingNode* parentNode_;
     bool connected_ = false;
     bool highlighted_ = false;
+    bool dimmed_ = false;
     QColor cableColor_ = Qt::black;
 };
 
@@ -45,8 +48,10 @@ class RoutingNode : public QGraphicsObject {
     Q_OBJECT
 
 public:
+    // `color` is the node's own colour (the track colour for tracks and buses);
+    // `badgeColor` marks its kind.
     RoutingNode(NodeType type, const QString& name, const QColor& color,
-                QGraphicsItem* parent = nullptr);
+                const QColor& badgeColor, QGraphicsItem* parent = nullptr);
 
     QRectF boundingRect() const override;
     void paint(QPainter* painter, const QStyleOptionGraphicsItem* option,
@@ -76,8 +81,24 @@ public:
     bool isWarning() const { return warning_; }
     void setWarning(bool w) { warning_ = w; update(); }
 
-    static constexpr qreal NODE_WIDTH = 150.0;
+    // Live level, 0..1, shown as a bar under the header.
+    bool hasMeter() const;
+    void setLevel(float normalized);
+    float level() const { return level_; }
+
+    bool hasMuteSolo() const { return type_ == NodeType::Track || type_ == NodeType::Bus; }
+    void setMuteSolo(bool muted, bool soloed);
+    // Muted, or silent because another track is soloed: drawn greyed out.
+    void setSilenced(bool s);
+    bool isSilenced() const { return silenced_; }
+
+    void startRename();
+    // Replaces the kind badge, e.g. MAIN on the output Master plays through.
+    void setBadgeText(const QString& text) { badgeOverride_ = text; update(); }
+
+    static constexpr qreal NODE_WIDTH = 168.0;
     static constexpr qreal HEADER_HEIGHT = 26.0;
+    static constexpr qreal METER_AREA_HEIGHT = 9.0;
     static constexpr qreal EFFECT_ROW_HEIGHT = 18.0;
     static constexpr qreal JACK_AREA_HEIGHT = 28.0;
     static constexpr qreal JACK_OUTER_DIAMETER = 16.0;
@@ -86,18 +107,27 @@ public:
 signals:
     void nodeMoved();
     void renameRequested(const QString& newName);
+    void muteClicked();
+    void soloClicked();
 
 protected:
     QVariant itemChange(GraphicsItemChange change, const QVariant& value) override;
+    void mousePressEvent(QGraphicsSceneMouseEvent* event) override;
     void mouseDoubleClickEvent(QGraphicsSceneMouseEvent* event) override;
 
 private:
     void rebuildJacks();
     qreal bodyHeight() const;
+    qreal contentTop() const;
+    QRectF badgeRect() const;
+    QRectF soloRect() const;
+    QRectF muteRect() const;
+    QString badgeText() const;
 
     NodeType type_;
     QString name_;
     QColor color_;
+    QColor badgeColor_;
     QStringList effectNames_;
     std::vector<JackItem*> inputJacks_;
     std::vector<JackItem*> outputJacks_;
@@ -107,6 +137,11 @@ private:
     juce::String deviceName_;
     static bool groupMoveGuard_;
     bool warning_ = false;
+    float level_ = 0.0f;
+    bool muted_ = false;
+    bool soloed_ = false;
+    bool silenced_ = false;
+    QString badgeOverride_;
 };
 
 } // namespace OpenDaw

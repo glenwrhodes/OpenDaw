@@ -1,4 +1,5 @@
 #include "ChannelStrip.h"
+#include "SendsPanel.h"
 #include "utils/ThemeManager.h"
 #include "utils/IconFont.h"
 #include <QVBoxLayout>
@@ -169,6 +170,26 @@ void ChannelStrip::setupUI()
     connect(outputCombo_, QOverload<int>::of(&QComboBox::currentIndexChanged),
             this, &ChannelStrip::onOutputComboChanged);
     layout->addWidget(outputCombo_);
+
+    sendsBtn_ = new QPushButton(this);
+    sendsBtn_->setAccessibleName("Sends");
+    sendsBtn_->setToolTip("Aux sends: copy this track into a bus, such as a shared reverb");
+    sendsBtn_->setFixedHeight(19);
+    sendsBtn_->setStyleSheet(
+        QString("QPushButton { background: %1; color: %2; border: 1px solid %3; "
+                "border-radius: 3px; font-size: 9px; padding: 0 3px; text-align: left; }"
+                "QPushButton:hover { border: 1px solid %4; }")
+            .arg(theme.background.name(), theme.text.name(),
+                 theme.border.name(), theme.accent.name()));
+    connect(sendsBtn_, &QPushButton::clicked, this, [this]() {
+        // Parented to the window: a routing change rebuilds the mixer's strips.
+        if (track_)
+            SendsPanel::showFor(editMgr_, track_,
+                                sendsBtn_->mapToGlobal(QPoint(0, sendsBtn_->height())),
+                                window());
+    });
+    updateSendsButton();
+    layout->addWidget(sendsBtn_);
 
     nameLabel_ = new QLabel(this);
     nameLabel_->setAccessibleName("Track Name");
@@ -498,6 +519,8 @@ void ChannelStrip::setupMasterUI()
         inputCombo_->setVisible(false);
     if (outputCombo_)
         outputCombo_->setVisible(false);
+    if (sendsBtn_)
+        sendsBtn_->setVisible(false);
     if (armBtn_)
         armBtn_->setVisible(false);
     if (monoBtn_)
@@ -538,6 +561,7 @@ void ChannelStrip::refresh()
     if (!track_) return;
     nameLabel_->setText(QString::fromStdString(track_->getName().toStdString()));
     applyNameStyle();
+    updateSendsButton();
     update();
     {
         QSignalBlocker block(muteBtn_);
@@ -820,42 +844,18 @@ void ChannelStrip::populateOutputCombo()
 
     QSignalBlocker block(outputCombo_);
     outputCombo_->clear();
-    outputCombo_->addItem("Master", QString("__master__"));
+    for (const auto& choice : editMgr_->getOutputChoices(track_))
+        outputCombo_->addItem(choice.label, choice.key);
 
-    auto buses = editMgr_->getBusTracks();
-    for (auto* bus : buses) {
-        QString name = QString::fromStdString(bus->getName().toStdString());
-        QString id = QString::number(bus->itemID.getRawID());
-        outputCombo_->addItem(name, id);
-    }
-
-    if (!track_ || !editMgr_) return;
-    auto* dest = editMgr_->getTrackOutputDestination(track_);
-    if (!dest) {
-        outputCombo_->setCurrentIndex(0);
-    } else {
-        QString destId = QString::number(dest->itemID.getRawID());
-        int idx = outputCombo_->findData(destId);
-        outputCombo_->setCurrentIndex(idx >= 0 ? idx : 0);
-    }
+    if (!track_) return;
+    int idx = outputCombo_->findData(editMgr_->currentOutputKey(track_));
+    outputCombo_->setCurrentIndex(idx >= 0 ? idx : 0);
 }
 
 void ChannelStrip::onOutputComboChanged(int index)
 {
     if (!track_ || !editMgr_ || index < 0) return;
-
-    QString destData = outputCombo_->itemData(index).toString();
-    if (destData == "__master__") {
-        editMgr_->setTrackOutputToMaster(*track_);
-    } else {
-        uint64_t rawId = destData.toULongLong();
-        for (auto* bus : editMgr_->getBusTracks()) {
-            if (bus->itemID.getRawID() == rawId) {
-                editMgr_->setTrackOutputToTrack(*track_, *bus);
-                break;
-            }
-        }
-    }
+    editMgr_->setTrackOutputByKey(*track_, outputCombo_->itemData(index).toString());
 }
 
 void ChannelStrip::onArmToggled(bool armed)
@@ -989,6 +989,21 @@ void ChannelStrip::startRenameEdit()
 void ChannelStrip::updateSelectionStyle()
 {
     update();
+}
+
+void ChannelStrip::updateSendsButton()
+{
+    if (!sendsBtn_ || !track_ || !editMgr_) return;
+    const auto sends = editMgr_->getTrackSends(track_);
+    if (sends.empty()) {
+        sendsBtn_->setText(QString::fromUtf8("Sends \u25BE"));
+        return;
+    }
+    QStringList names;
+    for (const auto& send : sends)
+        names << QString::fromStdString(send.bus->getName().toStdString());
+    sendsBtn_->setText(QString::fromUtf8("\u2192 ") + names.join(", "));
+    sendsBtn_->setToolTip("Sends to " + names.join(", ") + ". Click to change their levels.");
 }
 
 } // namespace OpenDaw
