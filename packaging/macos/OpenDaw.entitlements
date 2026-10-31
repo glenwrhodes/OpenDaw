@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!-- Record from audio inputs under the hardened runtime. -->
+    <key>com.apple.security.device.audio-input</key>
+    <true/>
+    <!-- Load VST3 plugins signed by other developers (or not signed at all). -->
+    <key>com.apple.security.cs.disable-library-validation</key>
+    <true/>
+    <!-- Some plugins generate code at run time. -->
+    <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
+    <true/>
+</dict>
+</plist>

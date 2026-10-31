@@ -4,12 +4,15 @@ on:
   push:
     tags:
       - 'v*'
+  # Run by hand to test the macOS signing and notarization without a release.
+  workflow_dispatch:
 
 permissions:
   contents: write
 
 jobs:
   build-windows:
+    if: github.event_name == 'push'
     runs-on: windows-latest
     steps:
       - name: Checkout
@@ -113,7 +116,8 @@ jobs:
     env:
       HAS_SIGNING_CERT: ${{ secrets.MACOS_CERTIFICATE != '' }}
       HAS_SIGNING_ID: ${{ secrets.MACOS_SIGNING_IDENTITY != '' }}
-      HAS_NOTARIZE: ${{ secrets.MACOS_NOTARIZE_APPLE_ID != '' }}
+      HAS_NOTARIZE_KEY: ${{ secrets.ASC_KEY_P8 != '' }}
+      HAS_NOTARIZE_ID: ${{ secrets.MACOS_NOTARIZE_APPLE_ID != '' }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -143,7 +147,12 @@ jobs:
 
       - name: Extract version from tag
         id: version
-        run: echo "VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            echo "VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+          else
+            echo "VERSION=test-${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Configure CMake
         run: >
@@ -183,28 +192,78 @@ jobs:
         run: |
           echo "$MACOS_CERTIFICATE" | base64 --decode > certificate.p12
           security create-keychain -p "$MACOS_KEYCHAIN_PWD" build.keychain
-          security default-keychain -s build.keychain
+          security set-keychain-settings -lut 3600 build.keychain
           security unlock-keychain -p "$MACOS_KEYCHAIN_PWD" build.keychain
+          security list-keychains -d user -s build.keychain $(security list-keychains -d user | tr -d '"')
+          security default-keychain -s build.keychain
           security import certificate.p12 -k build.keychain -P "$MACOS_CERTIFICATE_PWD" -T /usr/bin/codesign
+          # The Developer ID intermediate isn't always in the runner's keychains.
+          curl -fsSL -o DeveloperIDG2CA.cer https://www.apple.com/certificateauthority/DeveloperIDG2CA.cer
+          security import DeveloperIDG2CA.cer -k build.keychain || true
           security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$MACOS_KEYCHAIN_PWD" build.keychain
-          rm certificate.p12
+          rm certificate.p12 DeveloperIDG2CA.cer
+          security find-identity -v -p codesigning build.keychain
 
       - name: Code-sign app bundle
         env:
           MACOS_SIGNING_IDENTITY: ${{ secrets.MACOS_SIGNING_IDENTITY }}
         run: |
           APP="build/OpenDaw_artefacts/Release/OpenDaw.app"
-          if [ -n "$MACOS_SIGNING_IDENTITY" ]; then
-            echo "Signing with Developer ID: $MACOS_SIGNING_IDENTITY"
-            codesign --force --deep --options runtime \
-              --sign "$MACOS_SIGNING_IDENTITY" \
-              --timestamp \
-              "$APP"
-          else
-            echo "No signing identity found — applying ad-hoc signature"
+          if [ -z "$MACOS_SIGNING_IDENTITY" ]; then
+            echo "No signing identity found: applying an ad-hoc signature"
             codesign --force --deep --sign - "$APP"
+            exit 0
           fi
-          codesign --verify --verbose "$APP"
+          SIGN=(codesign --force --options runtime --timestamp --sign "$MACOS_SIGNING_IDENTITY")
+          # Inside out: loose libraries and plugins, then frameworks, then the app.
+          find "$APP/Contents" -type f \( -name "*.dylib" -o -name "*.so" \) -print0 \
+            | xargs -0 -n 1 "${SIGN[@]}"
+          find "$APP/Contents/Frameworks" -maxdepth 1 -type d -name "*.framework" -print0 \
+            | xargs -0 -n 1 "${SIGN[@]}"
+          "${SIGN[@]}" --entitlements packaging/macos/OpenDaw.entitlements "$APP"
+          codesign --verify --deep --strict --verbose=2 "$APP"
+          codesign --display --entitlements - "$APP"
+
+      - name: Write notarization helper
+        run: |
+          # Notarizes a file, prints Apple's log if it's rejected, and staples the ticket.
+          cat > "$RUNNER_TEMP/notarize.sh" <<'SCRIPT'
+          set -euo pipefail
+          FILE="$1"; STAPLE="$2"
+          if [ -n "${ASC_KEY_P8:-}" ]; then
+            printf '%s' "$ASC_KEY_P8" > "$RUNNER_TEMP/AuthKey.p8"
+            AUTH=(--key "$RUNNER_TEMP/AuthKey.p8" --key-id "$ASC_KEY_ID" --issuer "$ASC_ISSUER_ID")
+          else
+            AUTH=(--apple-id "$MACOS_NOTARIZE_APPLE_ID" --password "$MACOS_NOTARIZE_PASSWORD" --team-id "$MACOS_NOTARIZE_TEAM_ID")
+          fi
+          OUT=$(xcrun notarytool submit "$FILE" "${AUTH[@]}" --wait --timeout 30m --output-format json) || true
+          echo "$OUT"
+          ID=$(echo "$OUT" | python3 -c 'import json,sys; print(json.load(sys.stdin)["id"])')
+          STATUS=$(echo "$OUT" | python3 -c 'import json,sys; print(json.load(sys.stdin)["status"])')
+          if [ "$STATUS" != "Accepted" ]; then
+            xcrun notarytool log "$ID" "${AUTH[@]}" || true
+            rm -f "$RUNNER_TEMP/AuthKey.p8"
+            exit 1
+          fi
+          rm -f "$RUNNER_TEMP/AuthKey.p8"
+          xcrun stapler staple "$STAPLE"
+          SCRIPT
+
+      - name: Notarize app
+        if: env.HAS_SIGNING_ID == 'true' && (env.HAS_NOTARIZE_KEY == 'true' || env.HAS_NOTARIZE_ID == 'true')
+        env:
+          ASC_KEY_P8: ${{ secrets.ASC_KEY_P8 }}
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          MACOS_NOTARIZE_APPLE_ID: ${{ secrets.MACOS_NOTARIZE_APPLE_ID }}
+          MACOS_NOTARIZE_PASSWORD: ${{ secrets.MACOS_NOTARIZE_PASSWORD }}
+          MACOS_NOTARIZE_TEAM_ID: ${{ secrets.MACOS_NOTARIZE_TEAM_ID }}
+        run: |
+          APP="build/OpenDaw_artefacts/Release/OpenDaw.app"
+          ditto -c -k --keepParent "$APP" OpenDaw-notarize.zip
+          bash "$RUNNER_TEMP/notarize.sh" OpenDaw-notarize.zip "$APP"
+          rm OpenDaw-notarize.zip
+          spctl --assess --type execute --verbose=4 "$APP"
 
       - name: Package DMG
         run: |
@@ -224,20 +283,22 @@ jobs:
             "OpenDaw-v${VERSION}-mac.dmg"
 
       - name: Notarize DMG
-        if: env.HAS_NOTARIZE == 'true'
+        if: env.HAS_SIGNING_ID == 'true' && (env.HAS_NOTARIZE_KEY == 'true' || env.HAS_NOTARIZE_ID == 'true')
         env:
+          ASC_KEY_P8: ${{ secrets.ASC_KEY_P8 }}
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
           MACOS_NOTARIZE_APPLE_ID: ${{ secrets.MACOS_NOTARIZE_APPLE_ID }}
           MACOS_NOTARIZE_PASSWORD: ${{ secrets.MACOS_NOTARIZE_PASSWORD }}
           MACOS_NOTARIZE_TEAM_ID: ${{ secrets.MACOS_NOTARIZE_TEAM_ID }}
         run: |
-          VERSION="${{ steps.version.outputs.VERSION }}"
-          DMG="OpenDaw-v${VERSION}-mac.dmg"
-          xcrun notarytool submit "$DMG" \
-            --apple-id "$MACOS_NOTARIZE_APPLE_ID" \
-            --password "$MACOS_NOTARIZE_PASSWORD" \
-            --team-id "$MACOS_NOTARIZE_TEAM_ID" \
-            --wait --timeout 600
-          xcrun stapler staple "$DMG"
+          DMG="OpenDaw-v${{ steps.version.outputs.VERSION }}-mac.dmg"
+          bash "$RUNNER_TEMP/notarize.sh" "$DMG" "$DMG"
+          spctl --assess --type open --context context:primary-signature --verbose=4 "$DMG"
+
+      - name: Remove signing keychain
+        if: always() && env.HAS_SIGNING_CERT == 'true'
+        run: security delete-keychain build.keychain || true
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
@@ -246,6 +307,7 @@ jobs:
           path: OpenDaw-v*-mac.dmg
 
   build-linux:
+    if: github.event_name == 'push'
     runs-on: ubuntu-22.04
     steps:
       - name: Checkout
@@ -343,7 +405,7 @@ jobs:
 
   release:
     needs: [build-windows, build-macos, build-linux]
-    if: always() && !cancelled() && contains(needs.*.result, 'success')
+    if: always() && !cancelled() && github.event_name == 'push' && contains(needs.*.result, 'success')
     runs-on: ubuntu-latest
     steps:
       - name: Download all artifacts
