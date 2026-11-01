@@ -1,4 +1,6 @@
 ﻿#include "AudioEngine.h"
+#include "LoudnessMeter.h"
+#include "LooperPlugin.h"
 #include <QSettings>
 
 namespace OpenDaw {
@@ -6,6 +8,7 @@ namespace OpenDaw {
 AudioEngine::AudioEngine()
 {
     engine_ = std::make_unique<te::Engine>("OpenDaw");
+    engine_->getPluginManager().createBuiltInType<LooperPlugin>();
 }
 
 AudioEngine::~AudioEngine() = default;
@@ -24,6 +27,10 @@ void AudioEngine::setDefaultAudioDevice()
     // asynchronously via triggerAsyncUpdate(). Pump the JUCE message
     // loop now so they exist before the UI enumerates them.
     juce::MessageManager::getInstance()->runDispatchLoopUntil(200);
+
+    auto tap = std::make_unique<LoudnessTap>();
+    loudnessTap_ = tap.get();
+    dm.setGlobalOutputAudioProcessor(std::move(tap));
 }
 
 void AudioEngine::restoreSavedAudioSettings()
@@ -103,6 +110,24 @@ juce::StringArray AudioEngine::getAvailableMidiOutputDevices() const
         if (auto dev = dm.getMidiOutDevice(i))
             result.add(dev->getName());
     return result;
+}
+
+void AudioEngine::applyInputSettings()
+{
+    QSettings settings;
+    const int mode = settings.value("audio/monitorMode", 1).toInt();
+    const double offsetMs = settings.value("audio/recordOffsetMs", 0.0).toDouble();
+    const auto monitor = mode == 0 ? te::InputDevice::MonitorMode::off
+                       : mode == 2 ? te::InputDevice::MonitorMode::on
+                                   : te::InputDevice::MonitorMode::automatic;
+
+    auto& dm = engine_->getDeviceManager();
+    for (int i = 0; i < dm.getNumWaveInDevices(); ++i) {
+        if (auto* dev = dm.getWaveInDevice(i)) {
+            dev->setMonitorMode(monitor);
+            dev->setRecordAdjustmentMs(offsetMs);
+        }
+    }
 }
 
 void AudioEngine::enableAllMidiInputDevices()

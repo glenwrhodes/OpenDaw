@@ -36,6 +36,9 @@ public:
                         int trackCount,
                         std::function<void()> requestRefresh);
     void setTrackYOffsetFunc(std::function<double(int)> func) { trackYOffsetFunc_ = std::move(func); }
+    // Display index of the track row at a scene y (rows can include take and
+    // automation lanes, so this is not y / track height).
+    void setTrackAtYFunc(std::function<int(double)> func) { trackAtYFunc_ = std::move(func); }
     void setLinkedChannelCount(int count) { linkedChannelCount_ = count; }
     int linkedChannelCount() const { return linkedChannelCount_; }
     void updateGeometry(double pixelsPerBeat, double trackHeight, double scrollY);
@@ -54,11 +57,19 @@ protected:
     void mouseMoveEvent(QGraphicsSceneMouseEvent* event) override;
     void mouseReleaseEvent(QGraphicsSceneMouseEvent* event) override;
     void mouseDoubleClickEvent(QGraphicsSceneMouseEvent* event) override;
+    void hoverEnterEvent(QGraphicsSceneHoverEvent* event) override;
     void hoverMoveEvent(QGraphicsSceneHoverEvent* event) override;
     void hoverLeaveEvent(QGraphicsSceneHoverEvent* event) override;
 
 private:
     bool isNearRightEdge(const QPointF& localPos) const;
+    bool isNearLeftEdge(const QPointF& localPos) const;
+    // The clip gain readout in the title bar of audio clips; drag it up or down.
+    QRectF gainHandleRect() const;
+    bool isOverGainHandle(const QPointF& localPos) const;
+    // Seconds of the clip's source that one scene pixel covers.
+    double secondsPerPixel() const;
+    void updateHoverCursor(const QPointF& localPos, Qt::KeyboardModifiers mods);
     double computeSnappedEndBeatFromSceneX(double sceneX) const;
     void paintMidiNotes(QPainter* painter, const QRectF& r, const QColor& noteBase);
 
@@ -75,6 +86,7 @@ private:
 
     std::vector<float> waveMin_;
     std::vector<float> waveMax_;
+    double waveSourceSecs_ = 0.0;   // length of the file the waveform covers
 
     std::vector<MidiNotePreview> midiNotes_;
     int midiLowestNote_ = 127;
@@ -85,6 +97,14 @@ private:
 
     bool dragging_ = false;
     bool resizingRight_ = false;
+    bool resizeMakesLoop_ = false;   // Ctrl+drag on the right edge loops the clip
+    bool trimmingLeft_ = false;
+    double trimLeftPreviewX_ = 0.0;   // scene x of the new left edge while trimming
+    bool slipping_ = false;
+    double slipStartOffset_ = 0.0;
+    bool gainDragging_ = false;
+    float gainStartDb_ = 0.0f;
+    bool hovered_ = false;
     bool duplicateDragging_ = false;
     double resizePreviewSegmentWidthPx_ = 0.0;
     QGraphicsRectItem* duplicateGhostItem_ = nullptr;
@@ -100,6 +120,7 @@ private:
     int     trackCount_ = 1;
     std::function<void()> requestRefresh_;
     std::function<double(int)> trackYOffsetFunc_;
+    std::function<int(double)> trackAtYFunc_;
 };
 
 } // namespace OpenDaw

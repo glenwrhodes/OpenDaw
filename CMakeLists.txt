@@ -72,6 +72,9 @@ set(OpenDaw_SOURCES
     src/app/OpenDawApplication.h    src/app/OpenDawApplication.cpp
     src/app/JuceQtBridge.h          src/app/JuceQtBridge.cpp
     src/engine/AudioEngine.h        src/engine/AudioEngine.cpp
+    src/engine/LoudnessMeter.h      src/engine/LoudnessMeter.cpp
+    src/engine/LooperPlugin.h       src/engine/LooperPlugin.cpp
+    src/engine/LooperEngine.h       src/engine/LooperEngine.cpp
     src/engine/EditManager.h        src/engine/EditManager.cpp
     src/engine/PluginScanner.h      src/engine/PluginScanner.cpp
     src/ui/MainWindow.h             src/ui/MainWindow.cpp
@@ -85,11 +88,16 @@ set(OpenDaw_SOURCES
     src/ui/timeline/AutomationLaneItem.h  src/ui/timeline/AutomationLaneItem.cpp
     src/ui/timeline/AutomationPointItem.h src/ui/timeline/AutomationPointItem.cpp
     src/ui/timeline/AutomationLaneHeader.h src/ui/timeline/AutomationLaneHeader.cpp
+    src/ui/timeline/TakeLanes.h src/ui/timeline/TakeLanes.cpp
+    src/ui/timeline/RecordingPreview.h src/ui/timeline/RecordingPreview.cpp
+    src/ui/timeline/EditTool.h src/ui/timeline/EditTool.cpp
     src/ui/timeline/MarkerTempoLane.h     src/ui/timeline/MarkerTempoLane.cpp
     src/ui/timeline/FolderHeaderWidget.h  src/ui/timeline/FolderHeaderWidget.cpp
     src/ui/mixer/MixerView.h        src/ui/mixer/MixerView.cpp
     src/ui/mixer/ChannelStrip.h     src/ui/mixer/ChannelStrip.cpp
     src/ui/mixer/SendsPanel.h       src/ui/mixer/SendsPanel.cpp
+    src/ui/mixer/LoudnessPanel.h    src/ui/mixer/LoudnessPanel.cpp
+    src/ui/looper/LooperWindow.h    src/ui/looper/LooperWindow.cpp
     src/ui/transport/TransportBar.h src/ui/transport/TransportBar.cpp
     src/ui/controls/RotaryKnob.h    src/ui/controls/RotaryKnob.cpp
     src/ui/controls/VolumeFader.h   src/ui/controls/VolumeFader.cpp

@@ -31,6 +31,7 @@ public:
     void setTrackHeight(int h);
     void setSelected(bool sel);
     void setAutomationVisible(bool visible);
+    void setTakesVisible(bool visible);
     void setCollapsed(bool collapsed);
     bool isCollapsed() const { return collapsed_; }
     void setIndented(bool indented);
@@ -44,6 +45,7 @@ signals:
     void instrumentSelectRequested(te::AudioTrack* track);
     void splitHandsRequested(te::AudioTrack* track);
     void automationToggled(te::AudioTrack* track, bool visible);
+    void takesToggled(te::AudioTrack* track, bool visible);
     void collapseToggled(te::AudioTrack* track, bool collapsed);
     void dragStarted(TrackHeaderWidget* header);
     void dragMoved(TrackHeaderWidget* header, int globalY);
@@ -105,6 +107,7 @@ private:
     LevelMeter* meter_;
     QPushButton* collapseBtn_ = nullptr;
     QPushButton* automationBtn_ = nullptr;
+    QPushButton* takesBtn_ = nullptr;
     QTimer meterTimer_;
     bool automationVisible_ = false;
     QWidget* gripHandle_ = nullptr;

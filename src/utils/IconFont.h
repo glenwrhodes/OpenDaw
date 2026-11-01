@@ -157,6 +157,13 @@ namespace mi {
     inline const QChar Chat              {0xE0B7};
     inline const QChar Warning           {0xE002};
     inline const QChar AcUnit            {0xE3B0};
+    inline const QChar Layers            {0xE53B};
+    inline const QChar NearMe            {0xE569};
+    inline const QChar PanTool           {0xE925};
+    inline const QChar SwapHoriz         {0xE8D4};
+    inline const QChar HighlightAlt      {0xEF52};
+    inline const QChar Check             {0xE5CA};
+    inline const QChar Close             {0xE5CD};
 }
 
 } // namespace icons

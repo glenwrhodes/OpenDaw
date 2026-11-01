@@ -18,7 +18,7 @@
 [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](CONTRIBUTING.md)
 
 Built with **Qt 6** for the UI and **Tracktion Engine** (JUCE) for the audio backend.
-Audio and MIDI tracks, a built-in piano roll, sheet music notation, a destructive audio clip editor, VST3 instrument support, bus routing, track automation, audio export, 8 built-in effects, 12 colour themes, an **AI assistant powered by Claude** — all free and open source.
+Audio and MIDI tracks, a built-in piano roll, sheet music notation, a destructive audio clip editor, VST3 instrument support, bus routing, track automation, audio export, 8 built-in effects, 12 colour themes, a **live looper that records your performance to the timeline**, an **AI assistant powered by Claude** — all free and open source.
 
 <br>
 
@@ -101,9 +101,71 @@ Each theme has its own 12-colour track palette. Tracks remember a palette slot r
 - Timeline context menu: Add Audio Track, Add MIDI Track, Create Empty MIDI Clip, Remove Track
 - Grid snapping: Off, Bar, 1/2, 1/4, 1/8, 1/16 or 1/32 (the **Grid** setting in the transport bar)
 - Horizontal and vertical zoom (Ctrl+= / Ctrl+-)
-- Drag the right edge of a clip to loop it (non-destructive clip looping)
+- Ctrl+drag the right edge of a clip to loop it (non-destructive clip looping); clips dropped from the browser loop when you drag their edge
 - Freeze tracks to reduce CPU load; bounce MIDI tracks to audio via the track context menu
 - Animated playhead cursor that tracks playback in real time
+
+### Edit Tools
+
+Pick a tool in the toolbar, under **Edit > Edit Tool**, or with the keys 1–5 while the timeline has focus:
+
+| Tool | Key | What it does |
+|------|-----|--------------|
+| **Smart** | 1 | Move clips; drag the lower part of either edge to trim; drag the top corners for fades; drag the dB readout in an audio clip's title bar for clip gain (double-click resets it); Alt+drag to slip the audio inside the clip; drag empty space on an audio track to select a time range |
+| **Range** | 2 | Drag across one or more tracks, over clips too, to select a time range; click to place the playhead |
+| **Razor** | 3 | Click a clip to cut it there; Shift+click cuts every track at that point |
+| **Pen** | 4 | Drag on a MIDI track to draw a clip |
+| **Eraser** | 5 | Click a clip to delete it |
+
+- **Time selections** span tracks: Delete removes what's inside, **Shift+Delete** ripple-deletes it (later clips move left), **S** splits every selected track at both edges, Ctrl+C / Ctrl+X / Ctrl+V copy, cut and paste the range (pasting at the playhead replaces what's there), and right-click loops it or makes it the punch range
+- **Ripple editing** (toolbar button, or Edit > Edit Tool > Ripple Editing): deleting clips or a range closes the gap on those tracks
+- **Crossfades**: clips crossfade automatically where they overlap on a track. Right-click an audio clip for **Fade Shape** (linear, fast, slow, S-curve) and to turn its crossfading off
+- **Clip gain**: each audio clip has its own gain, shown in its title bar and in the height of its waveform
+- **Nudge**: Alt+Left / Alt+Right moves the selected clips one grid step (add Shift for a quarter step), or the time selection when no clips are selected
+- **Edit > Select Clips After Playhead** (Ctrl+Shift+End)
+- A clip that doesn't loop stops where its audio file ends, so trimming never pulls in silence
+
+### Recording, Takes and Comping
+
+- Arm a track (R), pick its input, and press Record. Each pass you record on a track is kept as a **take**
+- While recording, the clip being recorded grows on the track with the playhead, and its waveform (or, on a MIDI track, its notes) is drawn as it comes in. When loop recording, it shows which pass you're on, with the previous pass drawn faintly ahead of the playhead
+- **Loop recording**: with Loop on, every pass around the loop becomes a take, and the track plays the last complete one. A pass cut short by stopping is kept but isn't used
+- Recording over existing audio replaces it on the track, but the old audio is kept as a take, so nothing is lost
+- **Take lanes**: the layers button on an audio track's header shows one lane per take under the track (they open by themselves after a loop recording). The parts of each take that are playing are drawn brighter
+- **Comping**: drag across a take lane to use that part of the take; double-click a take, or click its ✓, to use all of it. Takes join with short fades so the edits don't click. Right-click a take to delete it, or to delete the takes you aren't using
+- **Punch in/out**: turn on **Punch** in the transport bar and recording happens only inside the range on the ruler, drawn in red. Its arrow sets the **pre-roll** (how much plays before punch-in) and **post-roll** (how much plays after punch-out before it stops). Punch and Loop share the ruler range, so turning one on turns the other off
+- **Edit > Audio Settings > Recording** sets input monitoring (off, while the track is armed, or always) and a recording offset in milliseconds for lining recordings up with what you played along to
+
+### Looper
+
+A live looper in the style of a looper pedal or looping app, built into the DAW. Build a song up loop by loop, bring parts in and drop them out, and when you stop, the whole performance is already on the timeline as ordinary clips you can edit, mix and export. Open it with **View > Looper** (Ctrl+L) or the pads button on the toolbar.
+
+<div align="center">
+<img src="resources/screenshots/looper.png" alt="OpenDaw looper in action: on the right, the Looper window with four pads playing (Drums 1 bar, Bass 2 bars, Keys 2 bars, Lead 4 bars), each with a coloured ring showing where its loop is, and pad 5 recording in red; on the left, the timeline with each pad's track drawing what it plays as it plays, including a gap where the bass was stopped and started again" width="900">
+<br>
+<em>Performing with the looper: four loops playing in time and a fifth recording, while the timeline draws each pad's part as it happens</em>
+</div>
+
+<br>
+
+<div align="center">
+<img src="resources/screenshots/looper-printed.png" alt="The same performance after pressing Stop: the Drums, Bass, Keys, Lead and Vox tracks hold ordinary audio clips, with the bass as two clips either side of the bar where it was stopped" width="900">
+<br>
+<em>Press Stop and the performance is on the timeline as clips, each loop exactly where it came in and dropped out</em>
+</div>
+
+<br>
+
+
+- **Pads**: a grid of 8 loop pads (16 with **More Pads**). Click an empty pad to record, click again to close the loop, then click to stop it and start it again. The ring round each pad shows where the loop is; a blinking outline means it's waiting for the beat
+- **First loop sets the tempo**: record the first loop freely and its length sets the project tempo (as a whole number of beats or bars). Turn it off to loop at the project tempo instead, with an optional bar of **count-in** and the **click**
+- **In time**: taps land on the next **beat**, **bar** or **loop** (Start/stop on). A tap just after the beat still counts as on it. Loops after the first are whole beats, bars or loops long and play in phase with each other. **Record** can also stop a recording by itself after 1–16 bars
+- **Overdub** (Shift+click, or right-click > Overdub): adds a layer to a playing loop until you click again. **Undo** and **Redo** step back and forward through the layers
+- Right-click a pad to clear it, make it a **one-shot** (plays once, then stops) or put it in a **group** (A–D) so pads in the group take turns, like scenes
+- **Hear input** plays the input through the speakers while you loop (off by default when tracks don't monitor either, since a mic near speakers howls). Recordings are lined up with what you heard, allowing for the audio device's latency and the recording offset in Audio Settings
+- **The performance goes on the timeline, with no need to press Record**: each pad is its own track (Loop 1, Loop 2, ...; rename them like any track), and the looper runs as the transport plays forward. Whenever the transport is running and a pad is sounding, what it plays is drawn growing on its track; when you stop, it becomes clips covering exactly when each pad was playing, so the song keeps every loop coming in and dropping out. Each stop is one undo step (Ctrl+Z removes a take you don't want). A pad's track has its own fader, effects and routing, and the clips play through them like the live loops did. What you play over the loops without recording into a pad isn't included: arm a normal track and press Record for that
+- Keys 1–9 and 0 tap the pads (Shift: overdub), Space plays and stops, Esc stops every loop, Ctrl+Z / Ctrl+Y undo and redo the last pad's layer
+- The loops are saved with the project and come back when you open it
 
 ### Track Automation
 
@@ -209,7 +271,8 @@ Recorded a piano part onto one track? **Split Piano Hands (AI)** separates it in
 
 ### Transport
 
-- Return to Start, Stop, Play, Record, Loop and Metronome buttons
+- Return to Start, Stop, Play, Record, Loop, Punch and Metronome buttons
+- **Punch** records only inside the ruler range, with pre-roll and post-roll set from its arrow (see Recording, Takes and Comping)
 - **Count-in** before recording (1 or 2 bars, or 1 or 2 beats)
 - Position counter showing bars | beats | ticks, with elapsed time (m:ss.ms) underneath
 - Tempo (20-300 BPM), meter and grid in a display panel beside the counter — type a value, or scroll over it to change it
@@ -221,13 +284,18 @@ Recorded a piano part onto one track? **Split Piano Hands (AI)** separates it in
 ### Export Audio
 
 - File > Export Audio (Ctrl+Shift+E) opens the export dialog
-- **Three export formats**: WAV (uncompressed), FLAC (lossless), OGG Vorbis (lossy)
+- **Export a mix or stems**: the mix as one file, a file per track, or a file per bus (tracks routed into a bus share its file; tracks going straight to Master get their own). Each stem is that track's share of the mix, including the buses and effect returns it goes through, so the stems add up to the mix. Stem file names follow a pattern such as `{project} - {name}`
+- **Range**: the whole song, the loop / punch range, or the timeline's time selection
+- **Four export formats**: WAV (uncompressed), FLAC (lossless), OGG Vorbis and MP3 (lossy)
 - WAV: configurable bit depth (16 / 24 / 32-bit float)
 - FLAC: configurable bit depth (16 / 24)
-- OGG: configurable quality (0-10)
+- OGG: configurable quality (0-10); MP3: 128 to 320 kbps
 - Sample rate: 44.1 / 48 / 88.2 / 96 kHz
+- **Dither** for 16-bit WAV and FLAC
+- **Include Master effects**: on for a mix, off for stems by default
 - Optional normalize on export
-- Progress bar with cancel support during rendering
+- **Loudness report**: after exporting a mix, OpenDaw measures the file and tells you its integrated loudness, true peak and loudness range, and warns when the true peak is above -1 dBTP or streaming services will turn it down
+- Tracks that are disconnected or play out of another output aren't part of the mix, so they aren't exported
 - Remembers format, quality, and export directory between sessions
 
 ### Audio Settings
@@ -236,6 +304,7 @@ Recorded a piano part onto one track? **Split Piano Hands (AI)** separates it in
 - Select audio driver type (WASAPI, ASIO, DirectSound)
 - Choose output device, sample rate, and buffer size
 - Shows calculated latency in milliseconds
+- **Recording**: input monitoring (off, while the track is armed, or always) and a recording offset in milliseconds
 - Settings persist across sessions
 
 ### Autosave & Recovery
@@ -266,6 +335,7 @@ Recorded a piano part onto one track? **Split Piano Hands (AI)** separates it in
 - Instrument selector and MIDI channel on MIDI track strips
 - Bus channel strips alongside regular tracks
 - Master channel strip on the right
+- **Loudness meter** beside the master strip, measuring what OpenDaw plays to ITU-R BS.1770 / EBU R128: integrated, short-term and momentary loudness in LUFS, loudness range, and true peak (red above -1 dBTP). Pick a target (streaming -14, Apple Music -16, broadcast -23, ...) and it tells you how far off the mix is. It starts a new measurement each time playback starts, or when you press Reset
 - Drag channel strips to reorder tracks directly in the mixer
 - Always left-aligned, horizontally scrollable
 
@@ -462,7 +532,7 @@ The assistant uses **agentic tool use**: when you send a message, it decides whi
 | **Effects** | Add/remove built-in effects, set parameters, bypass |
 | **MIDI composition** | Create MIDI clips, add notes with pitch/timing/velocity/duration |
 | **Transport** | Play, stop, record, seek, tempo, time signature |
-| **Analysis** | Track levels, frequency balance, stereo image, transients, masking |
+| **Analysis** | Track levels, live master loudness, an exact offline loudness measurement of the mix (LUFS, true peak, loudness range), frequency balance, stereo image, transients, masking |
 | **Project** | Save, undo, redo, get project info |
 
 **Key features:**
@@ -723,7 +793,7 @@ Each track has controls in two places:
 - **File > Save** (Ctrl+S) -- save to the current file.
 - **File > Open** (Ctrl+O) -- load a previously saved project.
 - **File > New** (Ctrl+N) -- start a fresh empty project.
-- **File > Export Audio** (Ctrl+Shift+E) -- mix down your project to WAV, FLAC, or OGG Vorbis. Choose format, sample rate, bit depth (or quality for OGG), and whether to normalize.
+- **File > Export Audio** (Ctrl+Shift+E) -- mix down your project, or export stems, to WAV, FLAC, OGG Vorbis or MP3. Choose what to export, the range, format, sample rate, bit depth (or quality), dither and whether to normalize. A mix export ends with a loudness report.
 
 ### Keyboard shortcuts
 
@@ -732,9 +802,14 @@ Each track has controls in two places:
 | Shortcut | Action |
 |----------|--------|
 | Space | Play / Pause |
-| R | Record |
-| S | Split clip at playhead |
-| Delete / Backspace | Delete selected clips |
+| R | Record (press again to stop) |
+| S | Split clip at playhead, or every selected track at the edges of the time selection |
+| Delete / Backspace | Delete the time selection, or the selected clips |
+| Shift+Delete | Ripple delete (close the gap) |
+| 1 / 2 / 3 / 4 / 5 | Smart / Range / Razor / Pen / Eraser tool (timeline) |
+| Alt+Left / Alt+Right | Nudge the selected clips one grid step (with Shift, a quarter step) |
+| Esc | Clear the time selection |
+| Ctrl+Shift+End | Select clips after the playhead |
 | I / O | Set loop start / end at the playhead |
 | Ctrl+Z / Ctrl+Y | Undo / Redo |
 | Ctrl+A | Select all clips |
@@ -744,13 +819,14 @@ Each track has controls in two places:
 | Ctrl+O | Open project |
 | Ctrl+S | Save project |
 | Ctrl+Shift+S | Save As |
-| Ctrl+C | Copy selected clips |
-| Ctrl+X | Cut selected clips |
-| Ctrl+V | Paste clips at playhead |
+| Ctrl+C | Copy the selected clips or time selection |
+| Ctrl+X | Cut the selected clips or time selection |
+| Ctrl+V | Paste at the playhead |
 | Ctrl+I | Import audio |
 | Ctrl+Shift+I | Import MIDI |
 | Ctrl+Shift+E | Export audio |
 | Ctrl+Shift+P | MIDI Panic (all notes off) |
+| Ctrl+L | Looper |
 | Ctrl+Q | Quit |
 | Ctrl+= | Zoom in (timeline) |
 | Ctrl+- | Zoom out (timeline) |
@@ -800,13 +876,16 @@ AudioMixer/
       JuceQtBridge.h/cpp                  QTimer-based JUCE message pump
     engine/
       AudioEngine.h/cpp                   Wraps tracktion::engine::Engine, MIDI device enumeration
+      LoudnessMeter.h/cpp                 BS.1770 / EBU R128 loudness meter, the output tap and file analysis
+      LooperPlugin.h/cpp                  The looper's audio: input hub, per-pad recording, overdub, playback and print
+      LooperEngine.h/cpp                  The looper: pads, timing, layers, saving, and printing the performance
       EditManager.h/cpp                   Manages the current Edit: tracks, clips, routing, export, autosave
       PluginScanner.h/cpp                 VST3 plugin scanning and cache
     ui/
       MainWindow.h/cpp                    Main window with menus, docks, toolbar
       SplashScreen.h/cpp                  Borderless splash screen (click to dismiss)
       dialogs/
-        ExportDialog.h/cpp                Audio export dialog (WAV, sample rate, bit depth, normalize)
+        ExportDialog.h/cpp                Export dialog: mix or stems, range, format, bit depth, dither
         RecoveryDialog.h/cpp              Crash recovery session picker
         AudioSettingsDialog.h/cpp         Audio device and buffer configuration
       timeline/
@@ -814,7 +893,10 @@ AudioMixer/
         TimeRuler.h/cpp                   Beat/bar ruler with click and drag
         TrackHeaderWidget.h/cpp           Per-track controls, level meter, instrument button
         TrackLane.h/cpp                   Track lane data model
-        ClipItem.h/cpp                    Audio/MIDI clip with snapped dragging
+        ClipItem.h/cpp                    Audio/MIDI clip: move, trim, slip, fades, clip gain
+        EditTool.h/cpp                    The active edit tool (Smart, Range, Razor, Pen, Eraser) and ripple mode
+        TakeLanes.h/cpp                   Take lanes and their headers, for comping recorded takes
+        RecordingPreview.h/cpp            The clip being recorded (and the looper's print), drawn live
         GridSnapper.h/cpp                 Snap-to-grid logic
         AutomationLaneItem.h/cpp          Parameter automation lane (curve, points, freehand draw)
         AutomationPointItem.h/cpp         Draggable automation breakpoint
@@ -843,6 +925,9 @@ AudioMixer/
         MixerView.h/cpp                   Horizontal mixer panel
         ChannelStrip.h/cpp                Per-track mixer strip with instrument selector
         SendsPanel.h/cpp                  Popup for a track's aux sends (level, pre/post, mute, phase)
+        LoudnessPanel.h/cpp               Loudness meter beside the master strip
+      looper/
+        LooperWindow.h/cpp                The looper window: pads, settings, input meter
       transport/
         TransportBar.h/cpp                Transport buttons, position counter, tempo/meter/grid panel
       controls/

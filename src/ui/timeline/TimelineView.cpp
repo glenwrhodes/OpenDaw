@@ -1,4 +1,5 @@
 #include "TimelineView.h"
+#include "engine/LooperEngine.h"
 #include "AutomationLaneItem.h"
 #include "AutomationLaneHeader.h"
 #include "AutomationPointItem.h"
@@ -22,7 +23,9 @@
 #include <QSignalBlocker>
 #include <QDebug>
 #include <QLineF>
+#include <QGuiApplication>
 #include <cmath>
+#include <set>
 
 namespace OpenDaw {
 
@@ -84,15 +87,38 @@ void TimelineScene::dropEvent(QGraphicsSceneDragDropEvent* event)
     event->acceptProposedAction();
 }
 
+bool TimelineScene::toolTakesPress(QGraphicsSceneMouseEvent* event) const
+{
+    const auto tool = activeEditTool();
+    if (event->button() != Qt::LeftButton
+        || (tool != EditTool::Range && tool != EditTool::Razor && tool != EditTool::Eraser))
+        return false;
+    // Automation and take lanes keep their own editing.
+    for (auto* item : items(event->scenePos()))
+        if (dynamic_cast<AutomationPointItem*>(item) || dynamic_cast<AutomationLaneItem*>(item)
+            || dynamic_cast<TakeLaneItem*>(item))
+            return false;
+    return true;
+}
+
 void TimelineScene::mousePressEvent(QGraphicsSceneMouseEvent* event)
 {
+    if (toolTakesPress(event)) {
+        toolPressed_ = true;
+        toolDragging_ = false;
+        toolStartScenePos_ = event->scenePos();
+        backgroundDragCandidate_ = false;
+        event->accept();
+        return;
+    }
     if (event->button() == Qt::LeftButton) {
         auto hitItems = items(event->scenePos());
         bool hitInteractive = false;
         for (auto* item : hitItems) {
             if (dynamic_cast<ClipItem*>(item) ||
                 dynamic_cast<AutomationPointItem*>(item) ||
-                dynamic_cast<AutomationLaneItem*>(item))
+                dynamic_cast<AutomationLaneItem*>(item) ||
+                dynamic_cast<TakeLaneItem*>(item))
             { hitInteractive = true; break; }
         }
         backgroundDragCandidate_ = !hitInteractive;
@@ -105,6 +131,17 @@ void TimelineScene::mousePressEvent(QGraphicsSceneMouseEvent* event)
 
 void TimelineScene::mouseMoveEvent(QGraphicsSceneMouseEvent* event)
 {
+    if (toolPressed_) {
+        if (!toolDragging_ && activeEditTool() == EditTool::Range
+            && QLineF(toolStartScenePos_, event->scenePos()).length() >= 4.0) {
+            toolDragging_ = true;
+            emit toolDragStarted(toolStartScenePos_);
+        }
+        if (toolDragging_)
+            emit toolDragUpdated(toolStartScenePos_, event->scenePos());
+        event->accept();
+        return;
+    }
     if (backgroundDragCandidate_) {
         if (!backgroundDragging_) {
             constexpr double dragThresholdPixels = 5.0;
@@ -123,6 +160,16 @@ void TimelineScene::mouseMoveEvent(QGraphicsSceneMouseEvent* event)
 
 void TimelineScene::mouseReleaseEvent(QGraphicsSceneMouseEvent* event)
 {
+    if (toolPressed_ && event->button() == Qt::LeftButton) {
+        toolPressed_ = false;
+        if (toolDragging_)
+            emit toolDragFinished(toolStartScenePos_, event->scenePos());
+        else
+            emit toolClicked(event->scenePos(), event->modifiers());
+        toolDragging_ = false;
+        event->accept();
+        return;
+    }
     if (event->button() == Qt::LeftButton && backgroundDragCandidate_) {
         if (backgroundDragging_)
             emit backgroundDragFinished(backgroundDragStartScenePos_, event->scenePos());
@@ -137,13 +184,18 @@ void TimelineScene::mouseReleaseEvent(QGraphicsSceneMouseEvent* event)
 
 void TimelineScene::mouseDoubleClickEvent(QGraphicsSceneMouseEvent* event)
 {
+    if (toolTakesPress(event)) {
+        event->accept();
+        return;
+    }
     if (event->button() == Qt::LeftButton) {
         auto hitItems = items(event->scenePos());
         bool hitInteractive = false;
         for (auto* item : hitItems) {
             if (dynamic_cast<ClipItem*>(item) ||
                 dynamic_cast<AutomationPointItem*>(item) ||
-                dynamic_cast<AutomationLaneItem*>(item))
+                dynamic_cast<AutomationLaneItem*>(item) ||
+                dynamic_cast<TakeLaneItem*>(item))
             { hitInteractive = true; break; }
         }
         if (!hitInteractive) {
@@ -162,7 +214,8 @@ void TimelineScene::contextMenuEvent(QGraphicsSceneContextMenuEvent* event)
     for (auto* item : hitItems) {
         if (dynamic_cast<ClipItem*>(item) ||
             dynamic_cast<AutomationPointItem*>(item) ||
-            dynamic_cast<AutomationLaneItem*>(item))
+            dynamic_cast<AutomationLaneItem*>(item) ||
+            dynamic_cast<TakeLaneItem*>(item))
         { hitInteractive = true; break; }
     }
     if (!hitInteractive) {
@@ -446,6 +499,7 @@ TimelineView::TimelineView(EditManager* editMgr, QWidget* parent)
     connect(scene_, &TimelineScene::backgroundClicked,
             this, [this](double, double) {
                 selectTrack(nullptr);
+                clearTimeSelection();
             });
 
     connect(scene_, &TimelineScene::backgroundDragStarted,
@@ -454,6 +508,18 @@ TimelineView::TimelineView(EditManager* editMgr, QWidget* parent)
             this, &TimelineView::handleBackgroundDragUpdated);
     connect(scene_, &TimelineScene::backgroundDragFinished,
             this, &TimelineView::handleBackgroundDragFinished);
+
+    connect(scene_, &TimelineScene::toolDragStarted,
+            this, [this](QPointF start) { beginTimeSelection(start); });
+    connect(scene_, &TimelineScene::toolDragUpdated,
+            this, [this](QPointF, QPointF current) { updateTimeSelection(current); });
+    connect(scene_, &TimelineScene::toolDragFinished,
+            this, [this](QPointF, QPointF end) {
+                updateTimeSelection(end);
+                if (selection_.endBeat - selection_.startBeat < 1e-6)
+                    clearTimeSelection();
+            });
+    connect(scene_, &TimelineScene::toolClicked, this, &TimelineView::handleToolClick);
     qDebug() << "[TimelineView] ctor: scene connections done";
 
     // Double-click on empty area -> create blank MIDI clip on MIDI tracks
@@ -465,6 +531,21 @@ TimelineView::TimelineView(EditManager* editMgr, QWidget* parent)
             this, [this](QPointF scenePos, QPoint screenPos) {
                 QMenu menu;
                 menu.setAccessibleName("Timeline Context Menu");
+
+                if (selection_.active && selectionItem_
+                    && selectionItem_->rect().contains(scenePos)) {
+                    menu.addAction("Delete Selection", [this]() { deleteTimeSelection(false); });
+                    menu.addAction("Ripple Delete Selection (Shift+Delete)",
+                                   [this]() { deleteTimeSelection(true); });
+                    menu.addAction("Split at Selection Edges (S)",
+                                   [this]() { splitSelectedClipsAtPlayhead(); });
+                    menu.addAction("Copy Selection", [this]() { copySelectedClips(); });
+                    menu.addAction("Cut Selection", [this]() { cutSelectedClips(); });
+                    menu.addAction(editMgr_->isPunchEnabled() ? "Set Punch Range to Selection"
+                                                              : "Loop Selection",
+                                   [this]() { loopTimeSelection(); });
+                    menu.addSeparator();
+                }
 
                 int trackIdx = trackIndexAtSceneY(scenePos.y());
                 auto tracks = getVisibleTracks();
@@ -568,6 +649,15 @@ TimelineView::TimelineView(EditManager* editMgr, QWidget* parent)
         qDebug() << "[TimelineView] aboutToChangeEdit - clearing widgets";
         clearMidiClipDrawPreview();
         cleanupAutomationItems();
+        cleanupTakeLaneItems();
+        clearTimeSelection();
+        rangeClipboard_ = {};
+
+        for (auto* h : takeLaneHeaders_) {
+            headerVLayout_->removeWidget(h);
+            delete h;
+        }
+        takeLaneHeaders_.clear();
 
         for (auto* h : automationLaneHeaders_) {
             headerVLayout_->removeWidget(h);
@@ -604,6 +694,24 @@ TimelineView::TimelineView(EditManager* editMgr, QWidget* parent)
             this, &TimelineView::onEditChanged);
     connect(editMgr_, &EditManager::routingChanged,
             this, &TimelineView::rebuildTrackHeaders, Qt::QueuedConnection);
+    connect(editMgr_, &EditManager::punchChanged,
+            this, [this](bool) { syncLoopStateFromTransport(); });
+    // A loop recording that made several takes opens the track's take lanes.
+    connect(editMgr_, &EditManager::takesChanged,
+            this, [this](te::AudioTrack* track, int newTakes) {
+                const auto id = track ? track->itemID : te::EditItemID();
+                QTimer::singleShot(0, this, [this, id, newTakes]() {
+                    if (newTakes > 1) {
+                        auto visTracks = getVisibleTracks();
+                        for (int i = 0; i < visTracks.size() && i < int(layout_.size()); ++i)
+                            if (visTracks[i]->itemID == id)
+                                layout_[i].takesVisible = true;
+                    }
+                    rebuildLayout();
+                    rebuildClips();
+                    rebuildTrackHeaders();
+                });
+            });
 
     qDebug() << "[TimelineView] ctor: calling onTracksChanged";
     onTracksChanged();
@@ -708,14 +816,34 @@ bool TimelineView::eventFilter(QObject* watched, QEvent* event)
 
         if (event->type() == QEvent::KeyPress) {
             auto* keyEvent = static_cast<QKeyEvent*>(event);
+            const auto mods = keyEvent->modifiers();
             if (keyEvent->key() == Qt::Key_Escape && isMidiClipDrawActive_) {
                 scene_->cancelBackgroundDrag();
                 clearMidiClipDrawPreview();
                 keyEvent->accept();
                 return true;
             }
+            if (keyEvent->key() == Qt::Key_Escape && selection_.active) {
+                clearTimeSelection();
+                keyEvent->accept();
+                return true;
+            }
             if (keyEvent->key() == Qt::Key_Delete || keyEvent->key() == Qt::Key_Backspace) {
-                deleteSelectedClips();
+                // Shift+Delete ripples, as does Delete in ripple mode.
+                deleteSelection(rippleEditing() || (mods & Qt::ShiftModifier));
+                keyEvent->accept();
+                return true;
+            }
+            if ((keyEvent->key() == Qt::Key_Left || keyEvent->key() == Qt::Key_Right)
+                && (mods & Qt::AltModifier)) {
+                nudgeSelection(keyEvent->key() == Qt::Key_Left ? -1 : 1, mods & Qt::ShiftModifier);
+                keyEvent->accept();
+                return true;
+            }
+            // 1-5 pick a tool: Smart, Range, Razor, Pen, Eraser.
+            if (keyEvent->key() >= Qt::Key_1 && keyEvent->key() <= Qt::Key_5
+                && !(mods & (Qt::ControlModifier | Qt::AltModifier | Qt::ShiftModifier))) {
+                setEditTool(static_cast<EditTool>(keyEvent->key() - Qt::Key_1));
                 keyEvent->accept();
                 return true;
             }
@@ -856,6 +984,11 @@ void TimelineView::rebuildTrackHeaders()
         delete h;
     }
     automationLaneHeaders_.clear();
+    for (auto* h : takeLaneHeaders_) {
+        headerVLayout_->removeWidget(h);
+        delete h;
+    }
+    takeLaneHeaders_.clear();
     orderedHeaders_.clear();
 
     if (!editMgr_ || !editMgr_->edit()) return;
@@ -911,6 +1044,8 @@ void TimelineView::rebuildTrackHeaders()
                 this, &TimelineView::selectTrack);
         connect(header, &TrackHeaderWidget::automationToggled,
                 this, &TimelineView::toggleAutomation);
+        connect(header, &TrackHeaderWidget::takesToggled,
+                this, &TimelineView::toggleTakes);
         connect(header, &TrackHeaderWidget::collapseToggled,
                 this, &TimelineView::toggleCollapse);
         connect(header, &TrackHeaderWidget::dragStarted,
@@ -920,6 +1055,7 @@ void TimelineView::rebuildTrackHeaders()
         connect(header, &TrackHeaderWidget::dragFinished,
                 this, &TimelineView::onTrackDragFinished, Qt::QueuedConnection);
         header->setSelected(track == selectedTrack_);
+        header->refresh();   // arm, mute and solo as saved
 
         if (item.parentFolderId > 0)
             header->setIndented(true);
@@ -927,6 +1063,7 @@ void TimelineView::rebuildTrackHeaders()
         if (trackLayoutIdx < static_cast<int>(layout_.size())) {
             header->setCollapsed(layout_[trackLayoutIdx].collapsed);
             header->setAutomationVisible(layout_[trackLayoutIdx].automationVisible);
+            header->setTakesVisible(layout_[trackLayoutIdx].takesVisible);
         }
 
         headerVLayout_->addWidget(header);
@@ -937,6 +1074,13 @@ void TimelineView::rebuildTrackHeaders()
         oh.track = track;
         oh.widget = header;
         orderedHeaders_.push_back(oh);
+
+        if (trackLayoutIdx < static_cast<int>(layout_.size())
+            && layout_[trackLayoutIdx].takesHeight() > 0.0) {
+            auto* takesHeader = new TakeLanesHeader(editMgr_, track, headerContainer_);
+            headerVLayout_->addWidget(takesHeader);
+            takeLaneHeaders_.push_back(takesHeader);
+        }
 
         if (trackLayoutIdx < static_cast<int>(layout_.size())
             && layout_[trackLayoutIdx].automationVisible
@@ -1107,6 +1251,8 @@ void TimelineView::onTrackDragMoved(TrackHeaderWidget* /*header*/, int globalY)
         headerVLayout_->removeWidget(oh.widget);
     for (auto* h : automationLaneHeaders_)
         headerVLayout_->removeWidget(h);
+    for (auto* h : takeLaneHeaders_)
+        headerVLayout_->removeWidget(h);
 
     int currentFolder = 0;
     for (auto& oh : orderedHeaders_) {
@@ -1244,6 +1390,8 @@ void TimelineView::onFolderDragMoved(FolderHeaderWidget* /*header*/, int globalY
     for (auto& oh : orderedHeaders_)
         headerVLayout_->removeWidget(oh.widget);
     for (auto* h : automationLaneHeaders_)
+        headerVLayout_->removeWidget(h);
+    for (auto* h : takeLaneHeaders_)
         headerVLayout_->removeWidget(h);
     for (auto& oh : orderedHeaders_)
         headerVLayout_->addWidget(oh.widget);
@@ -1411,6 +1559,7 @@ void TimelineView::rebuildLayout()
             info.shownParam = it->second.shownParam;
             info.collapsed = it->second.collapsed;
             info.clipRowHeight = it->second.clipRowHeight;
+            info.takesVisible = it->second.takesVisible;
         } else {
             info.automationVisible = false;
             info.automationLaneHeight = kDefaultLaneHeight;
@@ -1424,6 +1573,7 @@ void TimelineView::rebuildLayout()
 
         if (info.automationVisible && !info.shownParam)
             info.shownParam = editMgr_->getVolumeParam(item.track);
+        info.takeLaneCount = static_cast<int>(editMgr_->getTakes(item.track).size());
 
         info.yOffset = y;
         layout_.push_back(info);
@@ -1492,7 +1642,7 @@ void TimelineView::rebuildAutomationLanes(double sceneWidth)
         if (!param) param = editMgr_->getVolumeParam(track);
         if (!param) continue;
 
-        double laneY = layout_[i].yOffset + layout_[i].clipRowHeight;
+        double laneY = layout_[i].automationLaneY();
         double laneH = layout_[i].automationLaneHeight;
 
         auto* laneItem = new AutomationLaneItem(param, editMgr_->edit(),
@@ -1536,6 +1686,54 @@ void TimelineView::toggleAutomation(te::AudioTrack* track, bool visible)
     }
 }
 
+void TimelineView::toggleTakes(te::AudioTrack* track, bool visible)
+{
+    auto visTracks = getVisibleTracks();
+    for (int i = 0; i < visTracks.size(); ++i) {
+        if (visTracks[i] == track && i < static_cast<int>(layout_.size())) {
+            layout_[i].takesVisible = visible;
+            // Deferred: the rebuild deletes the header whose button sent this.
+            QTimer::singleShot(0, this, [this]() {
+                rebuildLayout();
+                rebuildClips();
+                rebuildTrackHeaders();
+            });
+            return;
+        }
+    }
+}
+
+void TimelineView::cleanupTakeLaneItems()
+{
+    for (auto* item : takeLaneItems_) {
+        if (item->scene()) scene_->removeItem(item);
+        delete item;
+    }
+    takeLaneItems_.clear();
+}
+
+void TimelineView::rebuildTakeLanes(double sceneWidth)
+{
+    cleanupTakeLaneItems();
+    if (!editMgr_ || !editMgr_->edit()) return;
+
+    auto tracks = getVisibleTracks();
+    for (int i = 0; i < static_cast<int>(layout_.size()) && i < tracks.size(); ++i) {
+        if (layout_[i].takesHeight() <= 0.0) continue;
+        const auto takes = editMgr_->getTakes(tracks[i]);
+        for (int t = 0; t < static_cast<int>(takes.size()); ++t) {
+            auto* lane = new TakeLaneItem(editMgr_, tracks[i], takes[size_t(t)],
+                                          pixelsPerBeat_, &snapper_);
+            lane->setSceneWidth(sceneWidth);
+            lane->setPos(0, layout_[i].yOffset + layout_[i].clipRowHeight
+                                + t * TakeLaneItem::kLaneHeight);
+            lane->setZValue(2);
+            scene_->addItem(lane);
+            takeLaneItems_.push_back(lane);
+        }
+    }
+}
+
 void TimelineView::toggleCollapse(te::AudioTrack* track, bool collapsed)
 {
     if (!editMgr_) return;
@@ -1570,12 +1768,19 @@ void TimelineView::rebuildClips()
     qDebug() << "[rebuildClips] start";
     auto& theme = ThemeManager::instance().current();
 
+    // Keep the clip selection across the rebuild (nudging rebuilds each step).
+    std::vector<te::EditItemID> selectedClipIds;
+    for (auto* item : clipItems_)
+        if (item->isSelected() && item->clip() && editMgr_ && editMgr_->isClipValid(item->clip()))
+            selectedClipIds.push_back(item->clip()->itemID);
+
     for (auto* item : clipItems_) scene_->removeItem(item);
     for (auto* item : trackBgItems_) scene_->removeItem(item);
     for (auto* item : gridLineItems_) scene_->removeItem(item);
     for (auto* item : trackSeparatorItems_) scene_->removeItem(item);
     clearMidiClipDrawPreview();
     cleanupAutomationItems();
+    cleanupTakeLaneItems();
 
     qDeleteAll(clipItems_);
     qDeleteAll(trackBgItems_);
@@ -1678,7 +1883,7 @@ void TimelineView::rebuildClips()
         trackBgItems_.push_back(bgItem);
 
         if (i < static_cast<int>(layout_.size()) && layout_[i].automationVisible && !layout_[i].collapsed) {
-            double laneY = y + thisH;
+            double laneY = layout_[i].automationLaneY();
             double laneH = layout_[i].automationLaneHeight;
             QColor laneBg = theme.surface.darker(110);
             auto* laneBgItem = scene_->addRect(0, laneY, sceneWidth, laneH,
@@ -1717,11 +1922,13 @@ void TimelineView::rebuildClips()
 
             qDebug() << "[rebuildClips] track" << ti << "clip" << clipIdx
                      << QString::fromStdString(clip->getName().toStdString());
+            EditManager::ensureAutoCrossfade(clip);
             auto* item = new ClipItem(clip, ti, pixelsPerBeat_, clipH);
             item->setDragContext(&snapper_, editMgr_,
                                 &pixelsPerBeat_, &trackHeight_, numTracks,
                                 [this]() { rebuildClips(); });
             item->setTrackYOffsetFunc([this](int idx) { return trackYOffset(idx); });
+            item->setTrackAtYFunc([this](double y) { return trackIndexAtSceneY(y); });
             if (item->isMidiClip()) {
                 if (auto* mc = dynamic_cast<te::MidiClip*>(clip)) {
                     auto linked = editMgr_->getLinkedMidiClips(track, mc);
@@ -1731,9 +1938,17 @@ void TimelineView::rebuildClips()
                     item->loadMidiPreview();
                 }
             } else {
+                // Points cover the whole file, of which the clip may show only part.
+                double sourceRatio = 1.0;
+                if (auto* acb = dynamic_cast<te::AudioClipBase*>(clip)) {
+                    const double clipSecs = clip->getPosition().getLength().inSeconds();
+                    const double srcSecs = acb->getSourceLength().inSeconds();
+                    if (clipSecs > 0.0 && srcSecs > clipSecs && !clip->isLooping())
+                        sourceRatio = srcSecs / clipSecs;
+                }
                 const int waveformPoints = std::clamp(
-                    static_cast<int>(std::max(50.0, item->rect().width() / 2.0)),
-                    50, 4096);
+                    static_cast<int>(std::max(50.0, item->rect().width() * sourceRatio / 2.0)),
+                    50, 8192);
                 item->loadWaveform(waveformPoints);
             }
             item->updateGeometry(pixelsPerBeat_, clipH, 0);
@@ -1742,13 +1957,18 @@ void TimelineView::rebuildClips()
             item->setRect(0, 0, item->rect().width(), clipH - 2);
             item->setZValue(1);
             scene_->addItem(item);
+            if (std::find(selectedClipIds.begin(), selectedClipIds.end(), clip->itemID)
+                != selectedClipIds.end())
+                item->setSelected(true);
             clipItems_.push_back(item);
             ++clipIdx;
         }
     }
 
     rebuildAutomationLanes(sceneWidth);
+    rebuildTakeLanes(sceneWidth);
     updateLoopOverlay();
+    updateSelectionOverlay();
     qDebug() << "[rebuildClips] done";
 }
 
@@ -1800,6 +2020,8 @@ void TimelineView::updatePlayhead()
     }
     wasPlaying_ = isPlaying;
 
+    updateRecordingPreviews();
+
     if (markerTempoLane_ && markerTempoLane_->isVisible()) {
         double playBeat = ts.toBeats(editMgr_->transport().getPosition()).inBeats();
         markerTempoLane_->setPlayheadBeat(playBeat);
@@ -1817,15 +2039,81 @@ void TimelineView::updatePlayhead()
     }
 }
 
+void TimelineView::updateRecordingPreviews()
+{
+    auto* edit = editMgr_ ? editMgr_->edit() : nullptr;
+    const bool recording = edit && edit->getTransport().isRecording();
+    std::set<te::EditItemID> live;
+
+    if (recording) {
+        auto tracks = getVisibleTracks();
+        for (int i = 0; i < tracks.size(); ++i) {
+            auto* track = tracks[i];
+            const double rowH = i < int(layout_.size()) ? layout_[i].clipRowHeight : trackHeight_;
+            auto it = recordingPreviews_.find(track->itemID);
+            RecordingPreviewItem* item = it != recordingPreviews_.end() ? it->second : nullptr;
+            if (!item) {
+                // Only make an item once the track is actually recording.
+                bool trackRecording = false;
+                for (auto* idi : edit->getEditInputDevices().getDevicesForTargetTrack(*track))
+                    if (idi->isRecording(track->itemID)) { trackRecording = true; break; }
+                if (!trackRecording) continue;
+                item = new RecordingPreviewItem(*edit, track->itemID);
+                scene_->addItem(item);
+                recordingPreviews_[track->itemID] = item;
+            }
+            if (item->refresh(pixelsPerBeat_, trackYOffset(i), rowH, editMgr_->getTrackColour(track)))
+                live.insert(track->itemID);
+        }
+    }
+
+    for (auto it = recordingPreviews_.begin(); it != recordingPreviews_.end();) {
+        if (live.count(it->first)) { ++it; continue; }
+        scene_->removeItem(it->second);
+        delete it->second;
+        it = recordingPreviews_.erase(it);
+    }
+    // The looper's pads, printing as they play.
+    std::set<te::EditItemID> printing;
+    if (edit) {
+        auto tracks = getVisibleTracks();
+        for (const auto& print : editMgr_->looper().livePrints()) {
+            int i = 0;
+            while (i < tracks.size() && tracks[i]->itemID != print.track) ++i;
+            if (i >= tracks.size()) continue;
+            auto*& item = looperPreviews_[print.track];
+            if (!item) {
+                item = new LooperPrintPreviewItem(*edit);
+                scene_->addItem(item);
+            }
+            const double rowH = i < int(layout_.size()) ? layout_[i].clipRowHeight : trackHeight_;
+            item->refresh(print, pixelsPerBeat_, trackYOffset(i), rowH,
+                          editMgr_->getTrackColour(tracks[i]));
+            printing.insert(print.track);
+        }
+    }
+    for (auto it = looperPreviews_.begin(); it != looperPreviews_.end();) {
+        if (printing.count(it->first)) { ++it; continue; }
+        scene_->removeItem(it->second);
+        delete it->second;
+        it = looperPreviews_.erase(it);
+    }
+}
+
 // ── Loop region helpers ──────────────────────────────────────────────────────
 
 void TimelineView::updateLoopOverlay()
 {
     if (!loopOverlayItem_) return;
 
-    bool visible = ruler_->loopEnabled() && ruler_->loopOutBeat() > ruler_->loopInBeat();
+    bool visible = ruler_->regionVisible();
     loopOverlayItem_->setVisible(visible);
     if (visible) {
+        const bool punch = editMgr_ && editMgr_->isPunchEnabled();
+        auto& theme = ThemeManager::instance().current();
+        QColor regionColor = punch ? theme.transportRecord : theme.accent;
+        regionColor.setAlpha(punch ? 16 : 10);
+        loopOverlayItem_->setBrush(regionColor);
         double x1 = ruler_->loopInBeat() * pixelsPerBeat_;
         double x2 = ruler_->loopOutBeat() * pixelsPerBeat_;
         double h = scene_->sceneRect().height();
@@ -1901,6 +2189,7 @@ void TimelineView::syncLoopStateFromTransport()
 
     ruler_->setLoopRegion(std::max(0.0, inBeat), std::max(0.0, outBeat));
     ruler_->setLoopEnabled(looping);
+    ruler_->setPunchEnabled(editMgr_->isPunchEnabled());
     updateLoopOverlay();
 }
 
@@ -1953,6 +2242,15 @@ void TimelineView::splitSelectedClipsAtPlayhead()
 {
     if (!editMgr_ || !editMgr_->edit())
         return;
+
+    // With a time selection, split every selected track at both its edges.
+    if (selection_.active) {
+        const auto range = selectionTimeRange();
+        const auto tracks = selectionTracks();
+        editMgr_->splitTracksAt(tracks, range.getStart());
+        editMgr_->splitTracksAt(tracks, range.getEnd());
+        return;
+    }
 
     const auto playheadTime = editMgr_->transport().getPosition();
     bool didSplitAny = false;
@@ -2010,27 +2308,240 @@ void TimelineView::deleteSelectedClips()
 
     if (toDelete.empty()) return;
 
-    std::vector<te::Clip*> linkedToDelete;
-    for (auto* clip : toDelete) {
-        if (auto* mc = dynamic_cast<te::MidiClip*>(clip)) {
-            auto* track = mc->getAudioTrack();
-            if (track) {
-                auto linked = editMgr_->getLinkedMidiClips(track, mc);
-                for (auto* lc : linked) {
-                    if (lc != mc)
-                        linkedToDelete.push_back(lc);
-                }
+    const bool ripple = rippleEditing()
+                     || (QGuiApplication::keyboardModifiers() & Qt::ShiftModifier);
+    editMgr_->deleteClips(withLinkedClips(toDelete), ripple);
+    emit selectedClipsDeleted();
+}
+
+std::vector<te::Clip*> TimelineView::withLinkedClips(const std::vector<te::Clip*>& clips) const
+{
+    std::vector<te::Clip*> result = clips;
+    for (auto* clip : clips) {
+        auto* mc = dynamic_cast<te::MidiClip*>(clip);
+        auto* track = mc ? mc->getAudioTrack() : nullptr;
+        if (!track) continue;
+        for (auto* lc : editMgr_->getLinkedMidiClips(track, mc))
+            if (std::find(result.begin(), result.end(), lc) == result.end())
+                result.push_back(lc);
+    }
+    return result;
+}
+
+ClipItem* TimelineView::clipItemAt(QPointF scenePos) const
+{
+    for (auto* item : scene_->items(scenePos))
+        if (auto* ci = dynamic_cast<ClipItem*>(item))
+            return ci;
+    return nullptr;
+}
+
+// ── Edit tools and the time selection ───────────────────────────────────────
+
+void TimelineView::setEditTool(EditTool tool)
+{
+    if (tool == activeEditTool()) return;
+    setActiveEditTool(tool);
+    clearMidiClipDrawPreview();
+    graphicsView_->viewport()->setCursor(cursorForTool(tool));
+    emit editToolChanged(tool);
+}
+
+void TimelineView::handleToolClick(QPointF scenePos, Qt::KeyboardModifiers mods)
+{
+    if (!editMgr_ || !editMgr_->edit()) return;
+    auto& ts = editMgr_->edit()->tempoSequence;
+    const double beat = snapper_.snapBeat(std::max(0.0, scenePos.x() / pixelsPerBeat_));
+    const auto time = ts.toTime(tracktion::BeatPosition::fromBeats(beat));
+
+    switch (activeEditTool()) {
+        case EditTool::Range:
+            // A click without a drag places the playhead.
+            clearTimeSelection();
+            editMgr_->transport().setPosition(time);
+            break;
+        case EditTool::Razor:
+            // Shift+click cuts every track at that point.
+            if (mods & Qt::ShiftModifier) {
+                editMgr_->splitTracksAt(getVisibleTracks(), time);
+            } else if (auto* item = clipItemAt(scenePos)) {
+                if (auto* track = dynamic_cast<te::AudioTrack*>(item->clip()->getTrack()))
+                    editMgr_->splitTracksAt({ track }, time);
             }
+            break;
+        case EditTool::Eraser:
+            if (auto* item = clipItemAt(scenePos))
+                editMgr_->deleteClips(withLinkedClips({ item->clip() }), rippleEditing());
+            break;
+        default:
+            break;
+    }
+}
+
+void TimelineView::beginTimeSelection(QPointF scenePos)
+{
+    selectionAnchorBeat_ = snapper_.snapBeat(std::max(0.0, scenePos.x() / pixelsPerBeat_));
+    selectionAnchorTrack_ = trackIndexAtSceneY(scenePos.y());
+    scene_->clearSelection();
+    selection_ = {};
+    selection_.active = true;
+    updateTimeSelection(scenePos);
+}
+
+void TimelineView::updateTimeSelection(QPointF scenePos)
+{
+    if (!selection_.active) return;
+    const double beat = snapper_.snapBeat(std::max(0.0, scenePos.x() / pixelsPerBeat_));
+    const int trackIdx = trackIndexAtSceneY(scenePos.y());
+    selection_.startBeat = std::min(selectionAnchorBeat_, beat);
+    selection_.endBeat = std::max(selectionAnchorBeat_, beat);
+
+    selection_.tracks.clear();
+    const auto tracks = getVisibleTracks();
+    const int first = std::min(selectionAnchorTrack_, trackIdx);
+    const int last = std::max(selectionAnchorTrack_, trackIdx);
+    for (int i = std::max(0, first); i <= last && i < tracks.size(); ++i)
+        selection_.tracks.push_back(tracks[i]->itemID);
+    updateSelectionOverlay();
+}
+
+void TimelineView::clearTimeSelection()
+{
+    selection_ = {};
+    updateSelectionOverlay();
+}
+
+void TimelineView::updateSelectionOverlay()
+{
+    int first = -1, last = -1;
+    if (selection_.active) {
+        const auto tracks = getVisibleTracks();
+        for (int i = 0; i < tracks.size() && i < static_cast<int>(layout_.size()); ++i) {
+            if (std::find(selection_.tracks.begin(), selection_.tracks.end(), tracks[i]->itemID)
+                == selection_.tracks.end())
+                continue;
+            if (first < 0) first = i;
+            last = i;
         }
     }
-    for (auto* lc : linkedToDelete)
-        toDelete.push_back(lc);
+    if (first < 0 || selection_.endBeat <= selection_.startBeat) {
+        if (selectionItem_) selectionItem_->setVisible(false);
+        return;
+    }
 
-    for (auto* clip : toDelete)
-        clip->removeFromParent();
+    if (!selectionItem_) {
+        auto& theme = ThemeManager::instance().current();
+        QColor fill = theme.accent;
+        fill.setAlpha(50);
+        QColor edge = theme.accent;
+        edge.setAlpha(200);
+        selectionItem_ = scene_->addRect(QRectF(), QPen(edge, 1.0), QBrush(fill));
+        selectionItem_->setZValue(95);   // over clips and lanes, under the playhead
+        selectionItem_->setAcceptedMouseButtons(Qt::NoButton);
+    }
+    const double y0 = layout_[size_t(first)].yOffset;
+    const double y1 = layout_[size_t(last)].yOffset + layout_[size_t(last)].totalHeight();
+    selectionItem_->setRect(selection_.startBeat * pixelsPerBeat_, y0,
+                            (selection_.endBeat - selection_.startBeat) * pixelsPerBeat_, y1 - y0);
+    selectionItem_->setVisible(true);
+}
 
-    rebuildClips();
+juce::Array<te::AudioTrack*> TimelineView::selectionTracks() const
+{
+    juce::Array<te::AudioTrack*> tracks;
+    for (auto id : selection_.tracks)
+        if (auto* t = editMgr_->findAudioTrack(id))
+            tracks.add(t);
+    return tracks;
+}
+
+tracktion::TimeRange TimelineView::selectionTimeRange() const
+{
+    auto& ts = editMgr_->edit()->tempoSequence;
+    return { ts.toTime(tracktion::BeatPosition::fromBeats(selection_.startBeat)),
+             ts.toTime(tracktion::BeatPosition::fromBeats(selection_.endBeat)) };
+}
+
+void TimelineView::deleteTimeSelection(bool ripple)
+{
+    if (!selection_.active || !editMgr_ || !editMgr_->edit()) return;
+    editMgr_->deleteTimeRange(selectionTracks(), selectionTimeRange(), ripple);
+    // After a ripple the audio under the selection has moved; it no longer
+    // marks anything.
+    if (ripple)
+        clearTimeSelection();
+}
+
+void TimelineView::loopTimeSelection()
+{
+    if (!selection_.active || !editMgr_ || !editMgr_->edit()) return;
+    auto& t = editMgr_->transport();
+    const auto range = selectionTimeRange();
+    t.loopPoint1 = range.getStart();
+    t.loopPoint2 = range.getEnd();
+    if (!editMgr_->isPunchEnabled())
+        t.looping.setValue(true, nullptr);
+    syncLoopStateFromTransport();
+}
+
+void TimelineView::deleteSelection(bool ripple)
+{
+    if (!editMgr_ || !editMgr_->edit()) return;
+    if (selection_.active) {
+        deleteTimeSelection(ripple);
+        return;
+    }
+    std::vector<te::Clip*> clips;
+    for (auto* item : clipItems_)
+        if (item && item->isSelected() && item->clip())
+            clips.push_back(item->clip());
+    if (clips.empty()) return;
+    editMgr_->deleteClips(withLinkedClips(clips), ripple);
     emit selectedClipsDeleted();
+}
+
+void TimelineView::selectClipsAfterPlayhead()
+{
+    if (!editMgr_ || !editMgr_->edit()) return;
+    const auto playhead = editMgr_->transport().getPosition();
+    clearTimeSelection();
+    for (auto* item : clipItems_)
+        if (item->clip())
+            item->setSelected(item->clip()->getPosition().getStart() >= playhead);
+}
+
+void TimelineView::nudgeSelection(int direction, bool fine)
+{
+    if (!editMgr_ || !editMgr_->edit()) return;
+    double step = snapper_.gridIntervalBeats();
+    if (step <= 0.0) step = 0.25;
+    if (fine) step /= 4.0;
+    const double delta = direction * step;
+
+    std::vector<te::Clip*> clips;
+    for (auto* item : clipItems_)
+        if (item->isSelected() && item->clip())
+            clips.push_back(item->clip());
+
+    if (clips.empty()) {
+        if (selection_.active) {
+            const double len = selection_.endBeat - selection_.startBeat;
+            selection_.startBeat = std::max(0.0, selection_.startBeat + delta);
+            selection_.endBeat = selection_.startBeat + len;
+            updateSelectionOverlay();
+        }
+        return;
+    }
+
+    auto& ts = editMgr_->edit()->tempoSequence;
+    editMgr_->edit()->getUndoManager().beginNewTransaction("Nudge");
+    for (auto* clip : withLinkedClips(clips)) {
+        const double startBeat = ts.toBeats(clip->getPosition().getStart()).inBeats();
+        const double newBeat = std::max(0.0, startBeat + delta);
+        clip->setStart(ts.toTime(tracktion::BeatPosition::fromBeats(newBeat)), false, true);
+    }
+    editMgr_->edit()->restartPlayback();
+    rebuildClips();
 }
 
 void TimelineView::copySelectedClips()
@@ -2038,6 +2549,27 @@ void TimelineView::copySelectedClips()
     if (!editMgr_ || !editMgr_->edit()) return;
 
     clipboardEntries_.clear();
+    rangeClipboard_ = {};
+
+    // A time selection copies what lies inside it on each selected track.
+    if (selection_.active) {
+        const auto range = selectionTimeRange();
+        const auto visible = getVisibleTracks();
+        const auto tracks = selectionTracks();
+        if (tracks.isEmpty()) return;
+        rangeClipboard_.valid = true;
+        rangeClipboard_.startSecs = range.getStart().inSeconds();
+        rangeClipboard_.lengthSecs = range.getLength().inSeconds();
+        rangeClipboard_.firstTrack = std::max(0, visible.indexOf(tracks.getFirst()));
+        for (int k = 0; k < tracks.size(); ++k) {
+            for (auto* clip : tracks[k]->getClips()) {
+                if (!clip->getPosition().time.overlaps(range)) continue;
+                clip->flushStateToValueTree();
+                rangeClipboard_.clips.emplace_back(k, clip->state.createCopy());
+            }
+        }
+        return;
+    }
 
     for (auto* item : clipItems_) {
         if (!item || !item->isSelected() || !item->clip()) continue;
@@ -2056,13 +2588,62 @@ void TimelineView::copySelectedClips()
 void TimelineView::cutSelectedClips()
 {
     copySelectedClips();
-    if (!clipboardEntries_.empty())
+    if (rangeClipboard_.valid)
+        deleteTimeSelection(rippleEditing());
+    else if (!clipboardEntries_.empty())
         deleteSelectedClips();
 }
 
 void TimelineView::pasteClips()
 {
-    if (clipboardEntries_.empty() || !editMgr_ || !editMgr_->edit()) return;
+    if (!editMgr_ || !editMgr_->edit()) return;
+
+    // A copied range lands at the playhead, on the selected track (or the
+    // tracks it came from) and those below, replacing what was there.
+    if (rangeClipboard_.valid) {
+        auto* edit = editMgr_->edit();
+        auto* um = &edit->getUndoManager();
+        const auto visible = getVisibleTracks();
+        int firstTrack = rangeClipboard_.firstTrack;
+        if (selectedTrack_ && visible.contains(selectedTrack_))
+            firstTrack = visible.indexOf(selectedTrack_);
+
+        const double at = edit->getTransport().getPosition().inSeconds();
+        const double len = rangeClipboard_.lengthSecs;
+        const double shift = at - rangeClipboard_.startSecs;
+        const tracktion::TimeRange dest(tracktion::TimePosition::fromSeconds(at),
+                                        tracktion::TimePosition::fromSeconds(at + len));
+        um->beginNewTransaction("Paste");
+
+        std::set<int> cleared;
+        for (const auto& [offset, state] : rangeClipboard_.clips) {
+            const int idx = firstTrack + offset;
+            if (idx < 0 || idx >= visible.size()) continue;
+            auto* track = visible[idx];
+            if (cleared.insert(idx).second)
+                track->deleteRegion(dest, nullptr);
+
+            auto newState = state.createCopy();
+            te::EditItemID::remapIDs(newState, nullptr, *edit);
+            track->state.appendChild(newState, um);
+            auto* clip = track->findClipForID(te::EditItemID::fromID(newState));
+            if (!clip) continue;
+            clip->setStart(clip->getPosition().getStart()
+                               + tracktion::TimeDuration::fromSeconds(shift), false, true);
+            // Keep only the part that was inside the copied range.
+            const auto pos = clip->getPosition();
+            if (pos.getStart() < dest.getStart())
+                te::deleteRegion(*clip, { pos.getStart(), dest.getStart() });
+            if (auto* still = track->findClipForID(te::EditItemID::fromID(newState));
+                still && still->getPosition().getEnd() > dest.getEnd())
+                te::deleteRegion(*still, { dest.getEnd(), still->getPosition().getEnd() });
+        }
+        edit->restartPlayback();
+        rebuildClips();
+        return;
+    }
+
+    if (clipboardEntries_.empty()) return;
 
     auto& transport = editMgr_->edit()->getTransport();
     auto playheadTime = transport.getPosition();
@@ -2158,9 +2739,18 @@ void TimelineView::handleBackgroundDragStarted(QPointF startScenePos)
     if (trackIdx < 0 || trackIdx >= tracks.size())
         return;
 
+    // Dragging over empty space draws a MIDI clip on a MIDI track (with the
+    // Smart or Pen tool). Otherwise, and with Shift, the Smart tool selects a
+    // time range.
     auto* track = tracks[trackIdx];
-    if (!editMgr_->isMidiTrack(track))
+    const bool shift = QGuiApplication::keyboardModifiers() & Qt::ShiftModifier;
+    if (!editMgr_->isMidiTrack(track) || (shift && activeEditTool() == EditTool::Smart)) {
+        if (activeEditTool() == EditTool::Smart) {
+            rangeFromBackground_ = true;
+            beginTimeSelection(startScenePos);
+        }
         return;
+    }
 
     midiClipDrawTrack_ = track;
     midiClipDrawStartBeat_ = snapper_.snapBeat(startScenePos.x() / pixelsPerBeat_);
@@ -2182,6 +2772,10 @@ void TimelineView::handleBackgroundDragStarted(QPointF startScenePos)
 
 void TimelineView::handleBackgroundDragUpdated(QPointF, QPointF currentScenePos)
 {
+    if (rangeFromBackground_) {
+        updateTimeSelection(currentScenePos);
+        return;
+    }
     if (!isMidiClipDrawActive_ || !midiClipDrawPreviewItem_ || !midiClipDrawTrack_)
         return;
 
@@ -2218,6 +2812,13 @@ void TimelineView::handleBackgroundDragUpdated(QPointF, QPointF currentScenePos)
 
 void TimelineView::handleBackgroundDragFinished(QPointF, QPointF endScenePos)
 {
+    if (rangeFromBackground_) {
+        rangeFromBackground_ = false;
+        updateTimeSelection(endScenePos);
+        if (selection_.endBeat - selection_.startBeat < 1e-6)
+            clearTimeSelection();
+        return;
+    }
     if (!editMgr_ || !editMgr_->edit() || !isMidiClipDrawActive_ || !midiClipDrawTrack_) {
         clearMidiClipDrawPreview();
         return;

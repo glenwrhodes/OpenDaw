@@ -383,9 +383,19 @@ QJsonArray AiToolDefs::allTools()
         QJsonObject props;
         props["window_seconds"] = propNumber("Analysis window length in seconds (recommended: 1-30).", 0.1, 300.0);
         tools.append(makeTool("analyze_master_levels",
-            "Analyze master/output level estimates and return integrated LUFS estimate, short-term LUFS estimate, peak, true peak estimate, and dynamic range estimate.",
+            "Read the master output right now: peak, per-track peaks, and the live loudness meter "
+            "(momentary, short-term and integrated LUFS, loudness range, true peak) over what has "
+            "played since the meter was last reset. Integrated values only mean something after "
+            "the song has played; for an exact figure without playing, use measure_mix_loudness.",
             props));
     }
+
+    tools.append(makeTool("measure_mix_loudness",
+        "Render the whole mix offline (faster than real time, no playback needed) and measure it "
+        "exactly to ITU-R BS.1770 / EBU R128: integrated loudness (LUFS), true peak (dBTP), "
+        "loudness range (LU) and the loudest 3 seconds. Use it to check a mix against a "
+        "delivery target such as -14 LUFS for streaming with true peak at or below -1 dBTP.",
+        QJsonObject()));
 
     {
         QJsonObject props;

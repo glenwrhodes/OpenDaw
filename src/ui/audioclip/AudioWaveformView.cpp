@@ -757,7 +757,7 @@ void AudioWaveformView::mouseMoveEvent(QMouseEvent* event)
             endBeat = std::max(clipStartBeat + interval, std::round(endBeat / interval) * interval);
         else
             endBeat = std::max(clipStartBeat + 0.1, endBeat);
-        clip_->setEnd(ts.toTime(tracktion::BeatPosition::fromBeats(endBeat)), false);
+        clip_->setEnd(ts.toTime(tracktion::BeatPosition::fromBeats(endBeat)), true);
         rebuild();
         emit clipModified();
         event->accept();

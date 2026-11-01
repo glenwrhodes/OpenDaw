@@ -7,6 +7,8 @@
 #include <QDir>
 #include <QSettings>
 #include <QFileInfo>
+#include <QSignalBlocker>
+#include <QStandardItemModel>
 
 namespace OpenDaw {
 
@@ -33,6 +35,24 @@ ExportDialog::ExportDialog(QWidget* parent)
     auto* form = new QFormLayout();
     form->setSpacing(8);
 
+    whatCombo_ = new QComboBox(this);
+    whatCombo_->setAccessibleName("What to Export");
+    whatCombo_->addItem("Mix (one file)", int(StemMode::None));
+    whatCombo_->addItem("Stems: a file per track", int(StemMode::Tracks));
+    whatCombo_->addItem("Stems: a file per bus", int(StemMode::Groups));
+    whatCombo_->setToolTip(
+        "Stems are each track's (or each bus's) share of the mix, including the buses and "
+        "effect returns it goes through, so they add up to the mix. With \"per bus\", tracks "
+        "routed into a bus share one file and tracks going straight to Master get their own.");
+    form->addRow("Export:", whatCombo_);
+
+    rangeCombo_ = new QComboBox(this);
+    rangeCombo_->setAccessibleName("Export Range");
+    rangeCombo_->addItem("Whole song", 0);
+    rangeCombo_->addItem("Loop / punch range", 1);
+    rangeCombo_->addItem("Time selection", 2);
+    form->addRow("Range:", rangeCombo_);
+
     formatCombo_ = new QComboBox(this);
     formatCombo_->setAccessibleName("Export Format");
     formatCombo_->addItem("WAV (Uncompressed)", static_cast<int>(ExportFormat::WAV));
@@ -53,7 +73,15 @@ ExportDialog::ExportDialog(QWidget* parent)
     connect(browseBtn_, &QPushButton::clicked, this, &ExportDialog::onBrowse);
     pathRow->addWidget(browseBtn_);
 
-    form->addRow("Output File:", pathRow);
+    pathLabel_ = new QLabel("Output File:", this);
+    form->addRow(pathLabel_, pathRow);
+
+    patternLabel_ = new QLabel("File Names:", this);
+    patternEdit_ = new QLineEdit(this);
+    patternEdit_->setAccessibleName("Stem File Name Pattern");
+    patternEdit_->setToolTip("How stem files are named: {project} is the project's name, "
+                             "{name} the track or bus, {n} its number");
+    form->addRow(patternLabel_, patternEdit_);
 
     sampleRateCombo_ = new QComboBox(this);
     sampleRateCombo_->setAccessibleName("Sample Rate");
@@ -100,6 +128,19 @@ ExportDialog::ExportDialog(QWidget* parent)
     form->addRow(mp3BitrateLabel_, mp3BitrateCombo_);
     mp3BitrateLabel_->setVisible(false);
     mp3BitrateCombo_->setVisible(false);
+
+    ditherCheck_ = new QCheckBox("Dither", this);
+    ditherCheck_->setAccessibleName("Dither 16-bit Output");
+    ditherCheck_->setToolTip("Adds a trace of noise when reducing to 16 bits, so quiet passages "
+                             "and fades don't turn into distortion");
+    form->addRow("", ditherCheck_);
+
+    masterFxCheck_ = new QCheckBox("Include Master effects", this);
+    masterFxCheck_->setAccessibleName("Include Master Effects");
+    masterFxCheck_->setToolTip("Run the export through Master's effects and fader. Usually on "
+                               "for a mix and off for stems, which the mastering engineer "
+                               "processes again.");
+    form->addRow("", masterFxCheck_);
 
     normalizeCheck_ = new QCheckBox("Normalize output", this);
     normalizeCheck_->setAccessibleName("Normalize Output");
@@ -149,6 +190,10 @@ ExportDialog::ExportDialog(QWidget* parent)
 
     connect(formatCombo_, QOverload<int>::of(&QComboBox::currentIndexChanged),
             this, &ExportDialog::onFormatChanged);
+    connect(bitDepthCombo_, QOverload<int>::of(&QComboBox::currentIndexChanged),
+            this, [this](int) { updateDitherVisibility(); });
+    connect(whatCombo_, QOverload<int>::of(&QComboBox::currentIndexChanged),
+            this, [this](int) { onWhatChanged(); });
 
     mainLayout->addLayout(buttonRow);
 
@@ -164,8 +209,79 @@ ExportDialog::ExportDialog(QWidget* parent)
     int mbIdx = mp3BitrateCombo_->findData(qs.value("export/mp3Bitrate", 320));
     if (mbIdx >= 0) mp3BitrateCombo_->setCurrentIndex(mbIdx);
     normalizeCheck_->setChecked(qs.value("export/normalize", false).toBool());
+    ditherCheck_->setChecked(qs.value("export/dither", true).toBool());
+    patternEdit_->setText(qs.value("export/stemPattern", "{project} - {name}").toString());
+    {
+        QSignalBlocker block(whatCombo_);
+        const int whatIdx = whatCombo_->findData(qs.value("export/what", 0));
+        whatCombo_->setCurrentIndex(whatIdx >= 0 ? whatIdx : 0);
+    }
+    setRanges({}, {});
 
     onFormatChanged(formatCombo_->currentIndex());
+    onWhatChanged();
+}
+
+bool ExportDialog::exportingStems() const
+{
+    return static_cast<StemMode>(whatCombo_->currentData().toInt()) != StemMode::None;
+}
+
+void ExportDialog::onWhatChanged()
+{
+    const bool stems = exportingStems();
+    pathLabel_->setText(stems ? "Folder:" : "Output File:");
+    pathEdit_->setPlaceholderText(stems ? "Select a folder for the stems..." : "Select output file...");
+    patternLabel_->setVisible(stems);
+    patternEdit_->setVisible(stems);
+    // Master processing belongs on the mix; stems usually go without it.
+    masterFxCheck_->setChecked(!stems);
+    // The path is a file for a mix and a folder for stems.
+    QString path = pathEdit_->text().trimmed();
+    if (!path.isEmpty()) {
+        QFileInfo fi(path);
+        if (stems && !fi.suffix().isEmpty())
+            pathEdit_->setText(fi.absolutePath());
+        else if (!stems && fi.suffix().isEmpty())
+            pathEdit_->setText(QDir(path).filePath("mix.wav"));
+        updatePathExtension();
+    }
+}
+
+void ExportDialog::setRanges(tracktion::TimeRange loopRange, tracktion::TimeRange selection)
+{
+    loopRange_ = loopRange;
+    selectionRange_ = selection;
+    auto describe = [](tracktion::TimeRange r) {
+        auto mmss = [](double s) {
+            return QString("%1:%2").arg(int(s) / 60).arg(s - 60 * (int(s) / 60), 4, 'f', 1, QChar('0'));
+        };
+        return QString(" (%1 to %2)").arg(mmss(r.getStart().inSeconds()), mmss(r.getEnd().inSeconds()));
+    };
+    auto* model = qobject_cast<QStandardItemModel*>(rangeCombo_->model());
+    const bool hasLoop = loopRange.getLength().inSeconds() > 0.0;
+    const bool hasSel = selection.getLength().inSeconds() > 0.0;
+    rangeCombo_->setItemText(1, "Loop / punch range" + (hasLoop ? describe(loopRange) : QString()));
+    rangeCombo_->setItemText(2, "Time selection" + (hasSel ? describe(selection) : QString()));
+    if (model) {
+        model->item(1)->setEnabled(hasLoop);
+        model->item(2)->setEnabled(hasSel);
+    }
+    // A fresh time selection is most likely what to export.
+    rangeCombo_->setCurrentIndex(hasSel ? 2 : 0);
+}
+
+void ExportDialog::updateDitherVisibility()
+{
+    const auto fmt = static_cast<ExportFormat>(formatCombo_->currentData().toInt());
+    const bool pcm = fmt == ExportFormat::WAV || fmt == ExportFormat::FLAC;
+    ditherCheck_->setVisible(pcm && bitDepthCombo_->currentData().toInt() == 16);
+}
+
+void ExportDialog::setStatus(const QString& text)
+{
+    statusPrefix_ = text;
+    statusLabel_->setText(text);
 }
 
 void ExportDialog::onFormatChanged(int)
@@ -200,12 +316,13 @@ void ExportDialog::onFormatChanged(int)
     }
 
     updatePathExtension();
+    updateDitherVisibility();
 }
 
 void ExportDialog::updatePathExtension()
 {
     QString path = pathEdit_->text().trimmed();
-    if (path.isEmpty()) return;
+    if (path.isEmpty() || exportingStems()) return;
 
     auto fmt = static_cast<ExportFormat>(formatCombo_->currentData().toInt());
     QString newExt;
@@ -236,8 +353,21 @@ ExportSettings ExportDialog::settings() const
     s.normalize = normalizeCheck_->isChecked();
     s.oggQuality = oggQualityCombo_->currentData().toInt();
     s.mp3Bitrate = mp3BitrateCombo_->currentData().toInt();
+    s.stems = static_cast<StemMode>(whatCombo_->currentData().toInt());
+    s.stemPattern = patternEdit_->text().trimmed().isEmpty() ? QString("{project} - {name}")
+                                                              : patternEdit_->text().trimmed();
+    s.dither = ditherCheck_->isChecked();
+    s.useMasterPlugins = masterFxCheck_->isChecked();
+    switch (rangeCombo_->currentData().toInt()) {
+        case 1: s.range = loopRange_; break;
+        case 2: s.range = selectionRange_; break;
+        default: break;
+    }
 
     QSettings qs;
+    qs.setValue("export/what", int(s.stems));
+    qs.setValue("export/dither", s.dither);
+    qs.setValue("export/stemPattern", s.stemPattern);
     qs.setValue("export/format", static_cast<int>(s.format));
     qs.setValue("export/sampleRate", s.sampleRate);
     qs.setValue("export/bitDepth", s.bitDepth);
@@ -267,6 +397,11 @@ void ExportDialog::setExporting(bool exporting)
     oggQualityCombo_->setEnabled(!exporting);
     mp3BitrateCombo_->setEnabled(!exporting);
     normalizeCheck_->setEnabled(!exporting);
+    whatCombo_->setEnabled(!exporting);
+    rangeCombo_->setEnabled(!exporting);
+    patternEdit_->setEnabled(!exporting);
+    ditherCheck_->setEnabled(!exporting);
+    masterFxCheck_->setEnabled(!exporting);
     progressBar_->setVisible(exporting);
     statusLabel_->setVisible(exporting);
 
@@ -283,7 +418,9 @@ void ExportDialog::setProgress(float progress)
 {
     progressBar_->setValue(static_cast<int>(progress * 1000.0f));
     int pct = static_cast<int>(progress * 100.0f);
-    statusLabel_->setText(QString("Exporting... %1%").arg(pct));
+    statusLabel_->setText(QString("%1 %2%").arg(statusPrefix_.isEmpty() ? QString("Exporting...")
+                                                                         : statusPrefix_)
+                              .arg(pct));
 }
 
 void ExportDialog::onBrowse()
@@ -293,6 +430,14 @@ void ExportDialog::onBrowse()
                                       QDir::homePath()).toString();
     if (startDir.isEmpty() || !QDir(startDir).exists())
         startDir = QDir::homePath();
+
+    if (exportingStems()) {
+        const QString dir = QFileDialog::getExistingDirectory(this, "Folder for the Stems", startDir);
+        if (dir.isEmpty()) return;
+        settings.setValue("paths/lastExportDir", dir);
+        pathEdit_->setText(dir);
+        return;
+    }
 
     auto fmt = static_cast<ExportFormat>(formatCombo_->currentData().toInt());
     QString filter;

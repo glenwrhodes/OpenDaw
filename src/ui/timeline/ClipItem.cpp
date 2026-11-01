@@ -1,5 +1,6 @@
 #include "ClipItem.h"
 #include "GridSnapper.h"
+#include "EditTool.h"
 #include "engine/EditManager.h"
 #include "utils/ThemeManager.h"
 #include "utils/WaveformCache.h"
@@ -33,6 +34,51 @@ bool ClipItem::isNearRightEdge(const QPointF& localPos) const
     return localPos.x() >= (rect().width() - edgeGrabWidth);
 }
 
+bool ClipItem::isNearLeftEdge(const QPointF& localPos) const
+{
+    constexpr double edgeGrabWidth = 8.0;
+    return localPos.x() <= edgeGrabWidth && rect().width() > 3 * edgeGrabWidth;
+}
+
+QRectF ClipItem::gainHandleRect() const
+{
+    if (isMidiClip_ || rect().height() < 34.0) return {};
+    const QRectF r = rect();
+    constexpr double w = 46.0;
+    if (r.width() < w + 60.0) return {};
+    return QRectF(r.right() - w - 3.0, r.top() + 1.0, w, 12.0);
+}
+
+bool ClipItem::isOverGainHandle(const QPointF& localPos) const
+{
+    const QRectF h = gainHandleRect();
+    return !h.isEmpty() && h.adjusted(-2, -1, 2, 2).contains(localPos);
+}
+
+double ClipItem::secondsPerPixel() const
+{
+    if (!clip_ || rect().width() <= 0.0) return 0.0;
+    return clip_->getPosition().getLength().inSeconds() / rect().width();
+}
+
+void ClipItem::updateHoverCursor(const QPointF& pos, Qt::KeyboardModifiers mods)
+{
+    const auto tool = activeEditTool();
+    if (tool != EditTool::Smart && tool != EditTool::Pen) {
+        setCursor(cursorForTool(tool));
+        return;
+    }
+    if (isOverGainHandle(pos))
+        setCursor(QCursor(Qt::SizeVerCursor));
+    else if (isNearFadeInHandle(pos) || isNearFadeOutHandle(pos)
+             || isNearRightEdge(pos) || isNearLeftEdge(pos))
+        setCursor(QCursor(Qt::SizeHorCursor));
+    else if ((mods & Qt::AltModifier) && !isMidiClip_)
+        setCursor(QCursor(Qt::SizeAllCursor));   // slip
+    else
+        setCursor(QCursor(Qt::OpenHandCursor));
+}
+
 double ClipItem::computeSnappedEndBeatFromSceneX(double sceneX) const
 {
     if (!clip_ || !pixelsPerBeatPtr_)
@@ -50,6 +96,16 @@ double ClipItem::computeSnappedEndBeatFromSceneX(double sceneX) const
         const double interval = snapper_->gridIntervalBeats();
         if (interval > 0.0)
             minLengthBeats = interval;
+    }
+
+    // An audio clip that doesn't loop stops where its file ends, unless this
+    // drag (Ctrl) turns looping on.
+    if (auto* acb = dynamic_cast<const te::AudioClipBase*>(clip_);
+        acb && !clip_->isLooping() && !resizeMakesLoop_) {
+        const auto pos = clip_->getPosition();
+        const auto fileEnd = pos.getStart() - pos.getOffset() + acb->getSourceLength();
+        endBeat = std::min(endBeat, ts.toBeats(fileEnd).inBeats());
+        return std::max(endBeat, startBeat + 0.01);
     }
 
     return std::max(endBeat, startBeat + minLengthBeats);
@@ -114,11 +170,23 @@ void ClipItem::paintFadeOverlays(QPainter* painter, const QRectF& r)
     constexpr double handleSize = 6.0;
     QColor handleColor(255, 255, 255, 200);
 
+    // The darkened area sits above the fade's gain curve, in the fade's shape.
+    auto* audioClip = dynamic_cast<te::AudioClipBase*>(clip_);
+    auto curveY = [&](te::AudioFadeCurve::Type type, double alpha) {
+        const double gain = te::AudioFadeCurve::alphaToGainForType(type, float(alpha));
+        return r.bottom() - gain * r.height();
+    };
+    constexpr int kCurveSteps = 24;
+
     if (fiw > 1.0) {
+        const auto type = audioClip ? audioClip->getFadeInType() : te::AudioFadeCurve::linear;
         QPainterPath fadeInPath;
         fadeInPath.moveTo(r.left(), r.top());
         fadeInPath.lineTo(r.left() + fiw, r.top());
-        fadeInPath.lineTo(r.left(), r.bottom());
+        for (int k = kCurveSteps; k >= 0; --k) {
+            const double a = double(k) / kCurveSteps;
+            fadeInPath.lineTo(r.left() + fiw * a, curveY(type, a));
+        }
         fadeInPath.closeSubpath();
         painter->fillPath(fadeInPath, overlay);
     }
@@ -129,10 +197,14 @@ void ClipItem::paintFadeOverlays(QPainter* painter, const QRectF& r)
     }
 
     if (fow > 1.0) {
+        const auto type = audioClip ? audioClip->getFadeOutType() : te::AudioFadeCurve::linear;
         QPainterPath fadeOutPath;
         fadeOutPath.moveTo(r.right(), r.top());
         fadeOutPath.lineTo(r.right() - fow, r.top());
-        fadeOutPath.lineTo(r.right(), r.bottom());
+        for (int k = kCurveSteps; k >= 0; --k) {
+            const double a = double(k) / kCurveSteps;
+            fadeOutPath.lineTo(r.right() - fow * a, curveY(type, a));
+        }
         fadeOutPath.closeSubpath();
         painter->fillPath(fadeOutPath, overlay);
     }
@@ -187,6 +259,7 @@ void ClipItem::loadWaveform(int numPoints)
             auto data = WaveformCache::instance().getWaveform(file, numPoints);
             waveMin_ = data.minValues;
             waveMax_ = data.maxValues;
+            waveSourceSecs_ = data.sampleRate > 0.0 ? double(data.totalSamples) / data.sampleRate : 0.0;
         }
     }
 }
@@ -310,6 +383,16 @@ void ClipItem::paint(QPainter* painter,
     if (!waveMin_.empty() && !waveMax_.empty()) {
         int n = static_cast<int>(waveMin_.size());
         double segmentWidth = r.width();
+        // The clip shows its source from its offset on, so a trimmed, split or
+        // comped clip draws only its own part of the file.
+        double segmentLeft = r.left();
+        const double clipSecs = clip_ ? clip_->getPosition().getLength().inSeconds() : 0.0;
+        // Clip-time scale from the clip as it stands in the edit; a resize
+        // preview only changes how much of it shows.
+        const double baseWidth = (resizingRight_ && resizePreviewSegmentWidthPx_ > 1.0
+                                  && clip_ && !clip_->isLooping())
+                                     ? resizePreviewSegmentWidthPx_ : r.width();
+        const double pxPerSec = clipSecs > 0.0 ? baseWidth / clipSecs : 0.0;
         if (clip_ && pixelsPerBeatPtr_ && clip_->isLooping()) {
             double loopBeats = 0.0;
             if (clip_->beatBasedLooping()) {
@@ -321,8 +404,16 @@ void ClipItem::paint(QPainter* painter,
                 loopBeats = (ts.toBeats(loopEndTime) - ts.toBeats(clipStartTime)).inBeats();
             }
 
-            if (loopBeats > 0.001)
+            if (loopBeats > 0.001) {
                 segmentWidth = std::max(1.0, loopBeats * *pixelsPerBeatPtr_);
+                const double offsetPx = clip_->beatBasedLooping()
+                    ? clip_->getOffsetInBeats().inBeats() * *pixelsPerBeatPtr_
+                    : clip_->getPosition().getOffset().inSeconds() * pxPerSec;
+                segmentLeft = r.left() - std::fmod(std::max(0.0, offsetPx), segmentWidth);
+            }
+        } else if (clip_ && waveSourceSecs_ > 0.0 && pxPerSec > 0.0) {
+            segmentWidth = waveSourceSecs_ * pxPerSec;
+            segmentLeft = r.left() - clip_->getPosition().getOffset().inSeconds() * pxPerSec;
         } else if (resizingRight_ && resizePreviewSegmentWidthPx_ > 1.0) {
             // During right-edge resize preview, keep waveform scale fixed and reveal/hide by clipping.
             segmentWidth = resizePreviewSegmentWidthPx_;
@@ -334,7 +425,11 @@ void ClipItem::paint(QPainter* painter,
 
             const double xScale = width / n;
             const double midY   = bodyRect.height() / 2.0;
-            const double amp    = bodyRect.height() / 2.0 * 0.9;
+            // Clip gain shows as the waveform's height.
+            double gainScale = 1.0;
+            if (auto* acb = dynamic_cast<te::AudioClipBase*>(clip_))
+                gainScale = std::min(2.5, double(juce::Decibels::decibelsToGain(acb->getGainDB())));
+            const double amp    = bodyRect.height() / 2.0 * 0.9 * gainScale;
 
             QPainterPath path;
             path.moveTo(left, bodyRect.top() + midY);
@@ -354,12 +449,12 @@ void ClipItem::paint(QPainter* painter,
         painter->save();
         painter->setClipRect(bodyRect);
 
-        if (segmentWidth < r.width() - 0.5) {
-            for (double left = r.left(); left < r.right(); left += segmentWidth)
+        if (clip_ && clip_->isLooping() && segmentWidth > 1.0) {
+            for (double left = segmentLeft; left < r.right(); left += segmentWidth)
                 drawWaveSegment(left, segmentWidth);
         } else {
-            // Draw at natural segment width; clip rect reveals partial segment when narrower.
-            drawWaveSegment(r.left(), segmentWidth);
+            // Draw at natural segment width; clip rect reveals the visible part.
+            drawWaveSegment(segmentLeft, segmentWidth);
         }
 
         painter->restore();
@@ -392,6 +487,24 @@ void ClipItem::paint(QPainter* painter,
                                  titleH > 0.0 ? titleH : 14.0),
                           Qt::AlignLeft | Qt::AlignVCenter,
                           QFontMetrics(f).elidedText(name, Qt::ElideRight, int(textRect.width())));
+
+        // Clip gain: shown while hovered, dragged, or when not 0 dB.
+        if (auto* acb = dynamic_cast<te::AudioClipBase*>(clip_)) {
+            const QRectF gh = gainHandleRect();
+            const float db = acb->getGainDB();
+            if (!gh.isEmpty() && (hovered_ || gainDragging_ || std::abs(db) > 0.05f)) {
+                QFont gf = f;
+                gf.setPixelSize(9);
+                painter->setFont(gf);
+                painter->setPen(Qt::NoPen);
+                painter->setBrush(gainDragging_ ? theme.accent : QColor(0, 0, 0, 120));
+                painter->drawRoundedRect(gh, 3, 3);
+                painter->setPen(gainDragging_ ? QColor(Qt::white) : QColor(225, 228, 232));
+                painter->drawText(gh, Qt::AlignCenter,
+                                  QString("%1%2 dB").arg(db > 0.05f ? "+" : "").arg(db, 0, 'f', 1));
+                painter->setFont(f);
+            }
+        }
 
         if (linkedChannelCount_ > 1) {
             QString badge = QString("%1ch").arg(linkedChannelCount_);
@@ -452,6 +565,36 @@ void ClipItem::mousePressEvent(QGraphicsSceneMouseEvent* event)
                 if (auto* wc = dynamic_cast<te::WaveAudioClip*>(clip_))
                     emit editMgr_->audioClipDoubleClicked(wc);
             });
+            if (auto* acb = dynamic_cast<te::AudioClipBase*>(clip_)) {
+                auto* shapes = menu.addMenu("Fade Shape");
+                const std::pair<QString, te::AudioFadeCurve::Type> kinds[] = {
+                    { "Linear", te::AudioFadeCurve::linear },
+                    { "Fast (convex)", te::AudioFadeCurve::convex },
+                    { "Slow (concave)", te::AudioFadeCurve::concave },
+                    { "S-Curve", te::AudioFadeCurve::sCurve },
+                };
+                for (const auto& [label, type] : kinds) {
+                    auto* a = shapes->addAction(label, [acb, t = type]() {
+                        acb->edit.getUndoManager().beginNewTransaction("Fade Shape");
+                        acb->setFadeInType(t);
+                        acb->setFadeOutType(t);
+                    });
+                    a->setCheckable(true);
+                    a->setChecked(acb->getFadeInType() == type);
+                }
+                auto* xfade = menu.addAction("Crossfade Where Clips Overlap", [acb](bool on) {
+                    acb->setAutoCrossfade(on);
+                });
+                xfade->setCheckable(true);
+                xfade->setChecked(acb->getAutoCrossfade());
+                if (std::abs(acb->getGainDB()) > 0.05f)
+                    menu.addAction("Reset Clip Gain", [acb]() { acb->setGainDB(0.0f); });
+                if (!acb->isLooping() && acb->canLoop())
+                    menu.addAction("Loop Clip", [acb]() {
+                        acb->setLoopRange({ tracktion::TimePosition::fromSeconds(0.0),
+                                            acb->getSourceLength() });
+                    });
+            }
             menu.addSeparator();
         }
 
@@ -518,6 +661,17 @@ void ClipItem::mousePressEvent(QGraphicsSceneMouseEvent* event)
     }
 
     if (event->button() == Qt::LeftButton) {
+        auto* audioClip = dynamic_cast<te::AudioClipBase*>(clip_);
+        if (audioClip && isOverGainHandle(event->pos())) {
+            gainDragging_ = true;
+            gainStartDb_ = audioClip->getGainDB();
+            dragStartScene_ = event->scenePos();
+            clip_->edit.getUndoManager().beginNewTransaction("Clip Gain");
+            setSelected(true);
+            update();
+            event->accept();
+            return;
+        }
         if (isNearFadeInHandle(event->pos()) && pixelsPerBeatPtr_) {
             fadeDragMode_ = FadeDragMode::FadeIn;
             dragging_ = false;
@@ -538,8 +692,29 @@ void ClipItem::mousePressEvent(QGraphicsSceneMouseEvent* event)
             event->accept();
             return;
         }
+        if (isNearLeftEdge(event->pos()) && pixelsPerBeatPtr_) {
+            trimmingLeft_ = true;
+            dragging_ = false;
+            clip_->edit.getUndoManager().beginNewTransaction("Trim Clip");
+            setCursor(QCursor(Qt::SizeHorCursor));
+            setSelected(true);
+            event->accept();
+            return;
+        }
+        if (audioClip && (event->modifiers() & Qt::AltModifier) && !isNearRightEdge(event->pos())) {
+            // Slip: move the audio inside the clip, which stays put.
+            slipping_ = true;
+            slipStartOffset_ = clip_->getPosition().getOffset().inSeconds();
+            dragStartScene_ = event->scenePos();
+            clip_->edit.getUndoManager().beginNewTransaction("Slip Clip");
+            setCursor(QCursor(Qt::SizeAllCursor));
+            setSelected(true);
+            event->accept();
+            return;
+        }
         if (isNearRightEdge(event->pos()) && pixelsPerBeatPtr_) {
             resizingRight_ = true;
+            resizeMakesLoop_ = (event->modifiers() & Qt::ControlModifier) != 0;
             dragging_ = false;
             duplicateDragging_ = false;
             resizePreviewSegmentWidthPx_ = rect().width();
@@ -626,6 +801,57 @@ void ClipItem::mousePressEvent(QGraphicsSceneMouseEvent* event)
 
 void ClipItem::mouseMoveEvent(QGraphicsSceneMouseEvent* event)
 {
+    if (gainDragging_) {
+        if (auto* acb = dynamic_cast<te::AudioClipBase*>(clip_)) {
+            // Up is louder; Shift for fine steps.
+            const double perPixel = (event->modifiers() & Qt::ShiftModifier) ? 0.05 : 0.25;
+            const double dy = event->scenePos().y() - dragStartScene_.y();
+            const float db = float(std::clamp(gainStartDb_ - dy * perPixel, -48.0, 24.0));
+            acb->setGainDB(std::round(db * 10.0f) / 10.0f);
+            update();
+        }
+        event->accept();
+        return;
+    }
+
+    if (trimmingLeft_ && clip_ && pixelsPerBeatPtr_) {
+        auto& ts = clip_->edit.tempoSequence;
+        double beat = std::max(0.0, event->scenePos().x() / *pixelsPerBeatPtr_);
+        if (snapper_)
+            beat = snapper_->snapBeat(beat);
+        const auto pos = clip_->getPosition();
+        // An audio clip can't start before its file does.
+        double minStart = 0.0;
+        if (!isMidiClip_ && !clip_->isLooping())
+            minStart = std::max(0.0, (pos.getStart() - pos.getOffset()).inSeconds());
+        const double maxStart = pos.getEnd().inSeconds() - 0.01;
+        const double newStart = std::clamp(ts.toTime(tracktion::BeatPosition::fromBeats(beat)).inSeconds(),
+                                           minStart, maxStart);
+        if (std::abs(newStart - pos.getStart().inSeconds()) > 1e-6) {
+            clip_->setStart(tracktion::TimePosition::fromSeconds(newStart), true, false);
+            if (auto* mc = dynamic_cast<te::MidiClip*>(clip_); mc && editMgr_)
+                editMgr_->propagateClipPosition(*mc);
+            updateGeometry(*pixelsPerBeatPtr_, rect().height() + 2.0, 0.0);
+        }
+        event->accept();
+        return;
+    }
+
+    if (slipping_ && clip_) {
+        const double dx = event->scenePos().x() - dragStartScene_.x();
+        double offset = std::max(0.0, slipStartOffset_ - dx * secondsPerPixel());
+        if (auto* acb = dynamic_cast<te::AudioClipBase*>(clip_); acb && !clip_->isLooping()) {
+            const double maxOffset = acb->getSourceLength().inSeconds()
+                                   - clip_->getPosition().getLength().inSeconds();
+            if (maxOffset > 0.0)
+                offset = std::min(offset, maxOffset);
+        }
+        clip_->setOffset(tracktion::TimeDuration::fromSeconds(offset));
+        update();
+        event->accept();
+        return;
+    }
+
     if (fadeDragMode_ != FadeDragMode::None && clip_ && pixelsPerBeatPtr_) {
         auto* audioClip = dynamic_cast<te::AudioClipBase*>(clip_);
         if (!audioClip) { fadeDragMode_ = FadeDragMode::None; return; }
@@ -694,7 +920,8 @@ void ClipItem::mouseMoveEvent(QGraphicsSceneMouseEvent* event)
         newBeat = snapper_->snapBeat(newBeat);
 
     int liveTrackCount = editMgr_ ? editMgr_->trackCount() : trackCount_;
-    int newTrack = dragStartTrack_ + int(std::round(delta.y() / th));
+    int newTrack = trackAtYFunc_ ? trackAtYFunc_(event->scenePos().y())
+                                 : dragStartTrack_ + int(std::round(delta.y() / th));
     newTrack = std::clamp(newTrack, 0, std::max(0, liveTrackCount - 1));
 
     double x = newBeat * ppb;
@@ -710,6 +937,28 @@ void ClipItem::mouseMoveEvent(QGraphicsSceneMouseEvent* event)
 
 void ClipItem::mouseReleaseEvent(QGraphicsSceneMouseEvent* event)
 {
+    if (event->button() == Qt::LeftButton && (gainDragging_ || slipping_ || trimmingLeft_)) {
+        const bool trimmed = trimmingLeft_;
+        gainDragging_ = slipping_ = trimmingLeft_ = false;
+        updateHoverCursor(event->pos(), event->modifiers());
+        update();
+        if (clip_ && editMgr_ && editMgr_->edit()) {
+            editMgr_->edit()->restartPlayback();
+            if (trimmed) {
+                if (auto* mc = dynamic_cast<te::MidiClip*>(clip_)) {
+                    editMgr_->trimNotesToClipBounds(*mc);
+                    emit editMgr_->midiClipModified(mc);
+                }
+                if (requestRefresh_) {
+                    auto refresh = requestRefresh_;
+                    QTimer::singleShot(0, [refresh]() { refresh(); });
+                }
+            }
+        }
+        event->accept();
+        return;
+    }
+
     if (event->button() == Qt::LeftButton && fadeDragMode_ != FadeDragMode::None) {
         fadeDragMode_ = FadeDragMode::None;
         setCursor(QCursor(Qt::OpenHandCursor));
@@ -728,7 +977,7 @@ void ClipItem::mouseReleaseEvent(QGraphicsSceneMouseEvent* event)
             const double endBeat = computeSnappedEndBeatFromSceneX(event->scenePos().x());
             auto& ts = clip_->edit.tempoSequence;
 
-            if (auto* acb = dynamic_cast<te::AudioClipBase*>(clip_)) {
+            if (auto* acb = dynamic_cast<te::AudioClipBase*>(clip_); acb && resizeMakesLoop_) {
                 if (acb->canLoop() && !acb->isLooping()) {
                     const auto& loopInfo = acb->getLoopInfo();
                     if (loopInfo.isLoopable() && !loopInfo.isOneShot() && loopInfo.getNumBeats() > 0.0) {
@@ -746,7 +995,7 @@ void ClipItem::mouseReleaseEvent(QGraphicsSceneMouseEvent* event)
                 }
             }
 
-            clip_->setEnd(ts.toTime(tracktion::BeatPosition::fromBeats(endBeat)), false);
+            clip_->setEnd(ts.toTime(tracktion::BeatPosition::fromBeats(endBeat)), true);
 
             if (isMidiClip_ && editMgr_) {
                 if (auto* mc = dynamic_cast<te::MidiClip*>(clip_)) {
@@ -785,7 +1034,8 @@ void ClipItem::mouseReleaseEvent(QGraphicsSceneMouseEvent* event)
             double newBeat = releasePos.x() / ppb;
             if (newBeat < 0) newBeat = 0;
 
-            int newTrack = int(std::round(releasePos.y() / th));
+            int newTrack = trackAtYFunc_ ? trackAtYFunc_(event->scenePos().y())
+                                         : int(std::round(releasePos.y() / th));
             newTrack = std::clamp(newTrack, 0, std::max(0, trackCount_ - 1));
 
             auto& ts = clip_->edit.tempoSequence;
@@ -888,23 +1138,33 @@ void ClipItem::mouseReleaseEvent(QGraphicsSceneMouseEvent* event)
     QGraphicsRectItem::mouseReleaseEvent(event);
 }
 
+void ClipItem::hoverEnterEvent(QGraphicsSceneHoverEvent* event)
+{
+    hovered_ = true;
+    updateHoverCursor(event->pos(), event->modifiers());
+    update();
+}
+
 void ClipItem::hoverMoveEvent(QGraphicsSceneHoverEvent* event)
 {
-    if (isNearFadeInHandle(event->pos()) || isNearFadeOutHandle(event->pos()))
-        setCursor(QCursor(Qt::SizeHorCursor));
-    else if (isNearRightEdge(event->pos()))
-        setCursor(QCursor(Qt::SizeHorCursor));
-    else
-        setCursor(QCursor(Qt::OpenHandCursor));
+    updateHoverCursor(event->pos(), event->modifiers());
 }
 
 void ClipItem::hoverLeaveEvent(QGraphicsSceneHoverEvent*)
 {
-    setCursor(QCursor(Qt::OpenHandCursor));
+    hovered_ = false;
+    update();
 }
 
 void ClipItem::mouseDoubleClickEvent(QGraphicsSceneMouseEvent* event)
 {
+    if (auto* acb = dynamic_cast<te::AudioClipBase*>(clip_); acb && isOverGainHandle(event->pos())) {
+        clip_->edit.getUndoManager().beginNewTransaction("Reset Clip Gain");
+        acb->setGainDB(0.0f);
+        update();
+        event->accept();
+        return;
+    }
     if (isMidiClip_ && editMgr_ && clip_) {
         if (auto* midiClip = dynamic_cast<te::MidiClip*>(clip_))
             emit editMgr_->midiClipDoubleClicked(midiClip);

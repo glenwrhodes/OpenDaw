@@ -5,6 +5,7 @@
 #include <QComboBox>
 #include <QPushButton>
 #include <QLabel>
+#include <QSpinBox>
 
 namespace OpenDaw {
 
@@ -30,6 +31,8 @@ private:
     QComboBox* sampleRateCombo_  = nullptr;
     QComboBox* bufferSizeCombo_  = nullptr;
     QLabel*    driverNote_       = nullptr;
+    QComboBox* monitorCombo_     = nullptr;
+    QSpinBox*  recordOffsetSpin_ = nullptr;
 };
 
 } // namespace OpenDaw

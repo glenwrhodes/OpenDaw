@@ -190,9 +190,27 @@ QJsonObject AiAudioAnalysis::analyzeMasterLevels(double windowSeconds)
     out["true_peak_est_dbfs"] = peakDb + 0.3;
     out["is_clipping"] = peakDb > -0.3;
     out["per_track_peaks"] = perTrack;
-    out["data_source"] = "Aggregated LevelMeterPlugin readings (real-time)";
-    out["limitations"] = "LUFS and RMS require integrated measurement over time, which is not yet "
-                         "available. Use peak data and track-level data to make gain staging decisions.";
+    out["data_source"] = "Track level meters (peaks) and the master loudness meter (LUFS)";
+
+    // The live meter measures the device output after Master, over what has
+    // played since it was last reset.
+    if (auto* tap = editMgr_->audioEngine().loudnessTap()) {
+        const auto r = tap->readings();
+        QJsonObject loud;
+        loud["momentary_lufs"] = r.momentary;
+        loud["short_term_lufs"] = r.shortTerm;
+        loud["integrated_lufs"] = r.integrated;
+        loud["loudness_range_lu"] = r.loudnessRange;
+        loud["true_peak_dbtp"] = r.truePeakDb;
+        loud["max_short_term_lufs"] = r.maxShortTerm;
+        loud["measured_seconds"] = r.seconds;
+        out["loudness"] = loud;
+        out["limitations"] = r.seconds < 10.0
+            ? "The loudness meter has measured under 10 seconds of playback, so the integrated "
+              "value isn't meaningful yet. Play the song, or call measure_mix_loudness."
+            : "Integrated values cover what played since the meter was last reset (it resets "
+              "when playback starts). -100 means silence.";
+    }
     return out;
 }
 

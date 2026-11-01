@@ -1,5 +1,7 @@
 #include "AiToolExecutor.h"
 #include <tracktion_engine/tracktion_engine.h>
+#include <QCoreApplication>
+#include <QtConcurrent/QtConcurrent>
 #include <cmath>
 #include <algorithm>
 
@@ -701,6 +703,41 @@ void AiToolExecutor::registerHandlers()
         return ok(id, audioAnalysis_.analyzeMasterLevels(windowSeconds));
     };
 
+    handlers_["measure_mix_loudness"] = [this](const QJsonObject&, const QString& id) -> AiToolResult {
+        if (!editMgr_->edit()) return err(id, "No project loaded.");
+        if (editMgr_->isRenderInProgress()) return err(id, "Another render is running.");
+
+        auto temp = juce::File::getSpecialLocation(juce::File::tempDirectory)
+                        .getNonexistentChildFile("OpenDaw-loudness", ".wav");
+        ExportSettings s;
+        s.destFile = temp;
+        s.sampleRate = 48000.0;
+        s.bitDepth = 24;
+        s.format = ExportFormat::WAV;
+        s.dither = false;
+
+        // Render on a worker thread while the UI keeps running.
+        bool rendered = false;
+        auto future = QtConcurrent::run([this, s, &rendered]() {
+            rendered = editMgr_->exportMix(s, nullptr);
+        });
+        while (!future.isFinished())
+            QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+        temp.deleteFile();
+        if (!rendered) return err(id, "The mix couldn't be rendered (is every track muted?).");
+
+        const auto r = editMgr_->lastExportLoudness();
+        QJsonObject out;
+        out["integrated_lufs"] = r.integrated;
+        out["true_peak_dbtp"] = r.truePeakDb;
+        out["loudness_range_lu"] = r.loudnessRange;
+        out["max_short_term_lufs"] = r.maxShortTerm;
+        out["duration_seconds"] = r.seconds;
+        out["includes_master_effects"] = true;
+        out["standard"] = "ITU-R BS.1770-4 / EBU R128, true peak 4x oversampled";
+        return ok(id, out);
+    };
+
     handlers_["analyze_frequency_balance"] = [this](const QJsonObject& input, const QString& id) -> AiToolResult {
         const auto target = input["target"];
         if (target.isString() && target.toString().compare("master", Qt::CaseInsensitive) == 0)
@@ -1009,8 +1046,10 @@ void AiToolExecutor::registerHandlers()
         }
         if (!anyArmed)
             return err(id, "No tracks are armed for recording. Arm a track first.");
-        editMgr_->transport().record(false);
-        return ok(id, "Recording started.");
+        editMgr_->startRecording();
+        return ok(id, editMgr_->isPunchEnabled()
+                          ? "Recording started in punch mode (records only inside the punch range)."
+                          : "Recording started.");
     };
 
     handlers_["set_position"] = [this](const QJsonObject& input, const QString& id) -> AiToolResult {

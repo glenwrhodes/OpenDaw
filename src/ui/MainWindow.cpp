@@ -8,6 +8,7 @@
 #include "ui/dialogs/AudioSettingsDialog.h"
 #include "ui/video/VideoPlayerWidget.h"
 #include "ui/SplashScreen.h"
+#include "ui/looper/LooperWindow.h"
 #include "utils/ThemeManager.h"
 #include "utils/IconFont.h"
 #include <QFileDialog>
@@ -377,6 +378,24 @@ void MainWindow::applyGlobalStyle()
             .arg(theme.surfaceLight.name(), theme.text.name(), theme.border.name()));
 }
 
+void MainWindow::showLooper(bool show)
+{
+    if (!looperWindow_) {
+        if (!show) return;
+        looperWindow_ = new LooperWindow(editMgr_, this);
+        connect(looperWindow_, &LooperWindow::visibilityChanged, this, [this](bool visible) {
+            if (looperAction_) looperAction_->setChecked(visible);
+        });
+    }
+    if (show) {
+        looperWindow_->show();
+        looperWindow_->raise();
+        looperWindow_->activateWindow();
+    } else {
+        looperWindow_->close();
+    }
+}
+
 void MainWindow::createMenus()
 {
     auto* menuBar = new QMenuBar(this);
@@ -448,12 +467,69 @@ void MainWindow::createMenus()
         redoMenuAction->setEnabled(edit && edit->getUndoManager().canRedo());
     });
     editMenu->addSeparator();
-    editMenu->addAction("&Delete Selected Clips\tDel", this, [this]() {
-        if (timelineView_) timelineView_->deleteSelectedClips();
+    editMenu->addAction("&Delete\tDel", this, [this]() {
+        if (timelineView_) timelineView_->deleteSelection(rippleEditing());
+    });
+    editMenu->addAction("Ripple Delete\tShift+Del", this, [this]() {
+        if (timelineView_) timelineView_->deleteSelection(true);
     });
     editMenu->addAction("Select &All Clips\tCtrl+A", this, [this]() {
         if (timelineView_) timelineView_->selectAllClips();
     });
+    auto* afterPlayhead = editMenu->addAction("Select Clips After &Playhead",
+        QKeySequence("Ctrl+Shift+End"), this, [this]() {
+            if (timelineView_) timelineView_->selectClipsAfterPlayhead();
+        });
+    afterPlayhead->setShortcutContext(Qt::WindowShortcut);
+    editMenu->addAction("Nudge Left\tAlt+Left", this, [this]() {
+        if (timelineView_) timelineView_->nudgeSelection(-1, false);
+    });
+    editMenu->addAction("Nudge Right\tAlt+Right", this, [this]() {
+        if (timelineView_) timelineView_->nudgeSelection(1, false);
+    });
+
+    // Edit tools: shared by this menu and the toolbar.
+    auto* toolMenu = editMenu->addMenu("Edit T&ool");
+    editToolGroup_ = new QActionGroup(this);
+    editToolGroup_->setExclusive(true);
+    const struct { EditTool tool; const char* label; const char* tip; } kTools[] = {
+        { EditTool::Smart,  "Smart Tool\t1",
+          "Smart tool (1): move clips, trim their edges, drag fades, drag the dB readout "
+          "for clip gain, Alt+drag to slip audio inside a clip, drag empty space to select a range" },
+        { EditTool::Range,  "Range Tool\t2",
+          "Range tool (2): select a time range across tracks, then Delete, Shift+Delete "
+          "(ripple), S (split), copy, cut or right-click to loop it" },
+        { EditTool::Razor,  "Razor Tool\t3",
+          "Razor tool (3): click a clip to cut it there; Shift+click cuts every track" },
+        { EditTool::Pen,    "Pen Tool\t4", "Pen tool (4): drag on a MIDI track to draw a clip" },
+        { EditTool::Eraser, "Eraser Tool\t5", "Eraser tool (5): click a clip to delete it" },
+    };
+    for (const auto& t : kTools) {
+        auto* a = toolMenu->addAction(t.label);
+        a->setCheckable(true);
+        a->setChecked(t.tool == activeEditTool());
+        a->setData(int(t.tool));
+        a->setToolTip(t.tip);
+        editToolGroup_->addAction(a);
+    }
+    connect(editToolGroup_, &QActionGroup::triggered, this, [this](QAction* a) {
+        if (timelineView_) timelineView_->setEditTool(static_cast<EditTool>(a->data().toInt()));
+    });
+    if (timelineView_) {
+        // Number keys in the timeline change the tool too.
+        connect(timelineView_, &TimelineView::editToolChanged, this, [this](EditTool tool) {
+            for (auto* a : editToolGroup_->actions())
+                if (a->data().toInt() == int(tool))
+                    a->setChecked(true);
+        });
+    }
+    toolMenu->addSeparator();
+    rippleAction_ = toolMenu->addAction("&Ripple Editing");
+    rippleAction_->setCheckable(true);
+    rippleAction_->setChecked(rippleEditing());
+    rippleAction_->setToolTip("Ripple editing: deleting clips or a range closes the gap, "
+                              "moving later clips on those tracks left");
+    connect(rippleAction_, &QAction::toggled, this, [](bool on) { setRippleEditing(on); });
     editMenu->addSeparator();
 
     editMenu->addAction("Add Audio &Track", QKeySequence("Ctrl+T"), this,
@@ -469,13 +545,13 @@ void MainWindow::createMenus()
     });
 
     editMenu->addSeparator();
-    editMenu->addAction("&Copy Clips", QKeySequence::Copy, this, [this]() {
+    editMenu->addAction("&Copy", QKeySequence::Copy, this, [this]() {
         if (timelineView_) timelineView_->copySelectedClips();
     });
-    editMenu->addAction("Cu&t Clips", QKeySequence::Cut, this, [this]() {
+    editMenu->addAction("Cu&t", QKeySequence::Cut, this, [this]() {
         if (timelineView_) timelineView_->cutSelectedClips();
     });
-    editMenu->addAction("&Paste Clips", QKeySequence::Paste, this, [this]() {
+    editMenu->addAction("&Paste", QKeySequence::Paste, this, [this]() {
         if (timelineView_) timelineView_->pasteClips();
     });
 
@@ -551,6 +627,12 @@ void MainWindow::createMenus()
         videoLaneAction->setChecked(timelineView_ && timelineView_->isVideoLaneVisible());
     });
     viewMenu->addSeparator();
+    looperAction_ = viewMenu->addAction("&Looper", QKeySequence("Ctrl+L"), this,
+        [this](bool on) { showLooper(on); });
+    looperAction_->setCheckable(true);
+    looperAction_->setToolTip("Looper (Ctrl+L): loop pads that record onto the timeline");
+    looperAction_->setShortcutContext(Qt::WindowShortcut);
+    addAction(looperAction_);
     auto* quickPromptAction = viewMenu->addAction("AI &Quick Prompt",
         QKeySequence("Ctrl+Shift+Space"), this, [this]() {
             if (aiQuickPrompt_)
@@ -574,7 +656,14 @@ void MainWindow::createMenus()
     });
 
     transportMenu->addAction("&Record", QKeySequence("R"), this, [this]() {
-        editMgr_.transport().record(false);
+        editMgr_.toggleRecording();
+    });
+    auto* punchAction = transportMenu->addAction("P&unch In/Out", this, [this](bool on) {
+        editMgr_.setPunchEnabled(on);
+    });
+    punchAction->setCheckable(true);
+    connect(transportMenu, &QMenu::aboutToShow, this, [this, punchAction]() {
+        punchAction->setChecked(editMgr_.isPunchEnabled());
     });
 
     transportMenu->addSeparator();
@@ -682,17 +771,23 @@ void MainWindow::createToolBar()
         mainToolBar_->addAction(splitClipAction_);
     }
 
-    auto* pointerAction = mainToolBar_->addAction(
-        faIcon(icons::fa::Pointer), "Pointer Tool");
-    pointerAction->setToolTip("Pointer Tool");
-
-    auto* penAction = mainToolBar_->addAction(
-        faIcon(icons::fa::Pen), "Pen Tool");
-    penAction->setToolTip("Pen Tool");
-
-    auto* eraserAction = mainToolBar_->addAction(
-        faIcon(icons::fa::Eraser), "Eraser Tool");
-    eraserAction->setToolTip("Eraser Tool");
+    // The tools share their actions (and checked state) with Edit > Edit Tool.
+    if (editToolGroup_) {
+        for (auto* a : editToolGroup_->actions()) {
+            switch (static_cast<EditTool>(a->data().toInt())) {
+                case EditTool::Smart:  a->setIcon(faIcon(icons::fa::Pointer)); break;
+                case EditTool::Range:  a->setIcon(miIcon(icons::mi::HighlightAlt)); break;
+                case EditTool::Razor:  a->setIcon(miIcon(icons::mi::ContentCut)); break;
+                case EditTool::Pen:    a->setIcon(faIcon(icons::fa::Pen)); break;
+                case EditTool::Eraser: a->setIcon(faIcon(icons::fa::Eraser)); break;
+            }
+            mainToolBar_->addAction(a);
+        }
+    }
+    if (rippleAction_) {
+        rippleAction_->setIcon(miIcon(icons::mi::SwapHoriz));
+        mainToolBar_->addAction(rippleAction_);
+    }
 
     mainToolBar_->addSeparator();
 
@@ -715,6 +810,10 @@ void MainWindow::createToolBar()
 
     mainToolBar_->addSeparator();
 
+    if (looperAction_) {
+        looperAction_->setIcon(faIcon(icons::fa::Drumpad));
+        mainToolBar_->addAction(looperAction_);
+    }
     if (mixerDock_) {
         auto* mixerToggle = mixerDock_->toggleViewAction();
         mixerToggle->setIcon(faIcon(icons::fa::Speaker));
@@ -1372,13 +1471,36 @@ void MainWindow::onSaveProjectAs()
 void MainWindow::onExportAudio()
 {
     ExportDialog dlg(this);
+    if (editMgr_.edit()) {
+        auto& t = editMgr_.transport();
+        const auto in = t.loopPoint1.get(), out = t.loopPoint2.get();
+        const tracktion::TimeRange loop = out > in ? tracktion::TimeRange(in, out)
+                                                   : tracktion::TimeRange();
+        dlg.setRanges(loop, timelineView_ ? timelineView_->timeSelectionRange()
+                                          : tracktion::TimeRange());
+    }
     if (dlg.exec() != QDialog::Accepted) return;
 
     auto settings = dlg.settings();
     if (settings.destFile == juce::File()) {
         QMessageBox::warning(this, "Export Audio",
-                             "Please select an output file.");
+                             settings.stems == StemMode::None ? "Please select an output file."
+                                                              : "Please select a folder for the stems.");
         return;
+    }
+
+    std::vector<EditManager::Stem> stems;
+    if (settings.stems != StemMode::None) {
+        if (!settings.destFile.isDirectory() && !settings.destFile.createDirectory()) {
+            QMessageBox::warning(this, "Export Audio", "The stems folder can't be created.");
+            return;
+        }
+        stems = editMgr_.planStems(settings.stems);
+        if (stems.empty()) {
+            QMessageBox::information(this, "Export Stems",
+                "No track is playing into the mix, so there are no stems to export.");
+            return;
+        }
     }
 
     ExportDialog progressDlg(this);
@@ -1387,26 +1509,81 @@ void MainWindow::onExportAudio()
     progressDlg.setModal(true);
     progressDlg.show();
 
-    bool success = false;
-    auto future = QtConcurrent::run([this, settings, &progressDlg, &success]() {
-        success = editMgr_.exportMix(settings, [&progressDlg](float p) {
-            QMetaObject::invokeMethod(&progressDlg, [&progressDlg, p]() {
-                progressDlg.setProgress(p);
-            }, Qt::QueuedConnection);
+    // Renders one file on a worker thread; the UI keeps painting meanwhile.
+    auto renderOne = [this, &progressDlg](const ExportSettings& s, float base, float span) {
+        bool ok = false;
+        auto future = QtConcurrent::run([this, s, &progressDlg, &ok, base, span]() {
+            ok = editMgr_.exportMix(s, [&progressDlg, base, span](float p) {
+                QMetaObject::invokeMethod(&progressDlg, [&progressDlg, p, base, span]() {
+                    progressDlg.setProgress(base + p * span);
+                }, Qt::QueuedConnection);
+            });
         });
-    });
+        while (!future.isFinished())
+            QApplication::processEvents(QEventLoop::AllEvents, 50);
+        return ok;
+    };
 
-    while (!future.isFinished()) {
-        QApplication::processEvents(QEventLoop::AllEvents, 50);
+    QStringList failed;
+    if (stems.empty()) {
+        if (!renderOne(settings, 0.0f, 1.0f))
+            failed << QString::fromStdString(settings.destFile.getFileName().toStdString());
+    } else {
+        const QString ext = settings.format == ExportFormat::FLAC ? ".flac"
+                          : settings.format == ExportFormat::OGG  ? ".ogg"
+                          : settings.format == ExportFormat::MP3  ? ".mp3" : ".wav";
+        const float span = 1.0f / float(stems.size());
+        for (size_t i = 0; i < stems.size(); ++i) {
+            QString name = settings.stemPattern;
+            name.replace("{project}", editMgr_.projectName())
+                .replace("{name}", stems[i].name)
+                .replace("{n}", QString("%1").arg(i + 1, 2, 10, QChar('0')));
+            const auto safe = EditManager::sanitizeForFilename(juce::String(name.toStdString()));
+            auto s = settings;
+            s.destFile = settings.destFile.getChildFile(safe + juce::String(ext.toStdString()));
+            progressDlg.setStatus(QString("Stem %1 of %2: %3...").arg(i + 1).arg(stems.size())
+                                      .arg(stems[i].name));
+            editMgr_.applyStemMutes(stems[i]);
+            const bool ok = renderOne(s, float(i) * span, span);
+            editMgr_.restoreStemMutes();
+            if (!ok) failed << stems[i].name;
+        }
     }
 
     progressDlg.hide();
 
-    if (success) {
-        auto fileName = QString::fromStdString(
-            settings.destFile.getFileName().toStdString());
-        QMessageBox::information(this, "Export Complete",
-            QString("Mix exported successfully to:\n%1").arg(fileName));
+    if (!stems.empty()) {
+        const auto folder = QString::fromStdString(settings.destFile.getFullPathName().toStdString());
+        if (failed.isEmpty()) {
+            QMessageBox::information(this, "Export Complete",
+                QString("Exported %1 stems to:\n%2").arg(stems.size()).arg(folder));
+            statusBar()->showMessage("Stems exported", 5000);
+        } else {
+            QMessageBox::warning(this, "Export Stems",
+                QString("These stems failed to export: %1\n\nThe others are in:\n%2")
+                    .arg(failed.join(", "), folder));
+        }
+        return;
+    }
+
+    if (failed.isEmpty()) {
+        auto fileName = QString::fromStdString(settings.destFile.getFileName().toStdString());
+        QString report = QString("Mix exported to:\n%1").arg(fileName);
+        const auto loud = editMgr_.lastExportLoudness();
+        if (loud.ok && loud.integrated > -70.0) {
+            report += QString("\n\nLoudness: %1 LUFS integrated, true peak %2 dBTP, range %3 LU.")
+                          .arg(loud.integrated, 0, 'f', 1)
+                          .arg(loud.truePeakDb, 0, 'f', 1)
+                          .arg(loud.loudnessRange, 0, 'f', 1);
+            if (loud.truePeakDb > -1.0)
+                report += "\n\nThe true peak is above -1 dBTP, so it may clip when a "
+                          "streaming service encodes it. A limiter on Master set to -1 dB fixes that.";
+            if (loud.integrated > -13.0)
+                report += QString("\n\nStreaming services turn mixes louder than -14 LUFS down, "
+                                  "so this one will play about %1 dB quieter there.")
+                              .arg(loud.integrated + 14.0, 0, 'f', 1);
+        }
+        QMessageBox::information(this, "Export Complete", report);
         statusBar()->showMessage("Export complete", 5000);
     } else {
         QMessageBox::critical(this, "Export Failed",

@@ -1,4 +1,5 @@
 #include "MixerView.h"
+#include "LoudnessPanel.h"
 #include "utils/ThemeManager.h"
 #include <QFrame>
 #include <QMouseEvent>
@@ -79,6 +80,12 @@ MixerView::MixerView(EditManager* editMgr, QWidget* parent)
     installFilterRecursive(masterStrip_, this);
     mainLayout->addWidget(masterStrip_);
 
+    auto* sep2 = new QFrame(this);
+    sep2->setFrameShape(QFrame::VLine);
+    sep2->setStyleSheet(QString("color: %1;").arg(theme.border.name()));
+    mainLayout->addWidget(sep2);
+    mainLayout->addWidget(new LoudnessPanel(editMgr_, this));
+
     connect(editMgr_, &EditManager::aboutToChangeEdit, this, [this]() {
         for (auto* s : strips_) {
             stripLayout_->removeWidget(s);
@@ -130,6 +137,7 @@ void MixerView::rebuildStrips()
         connect(strip, &ChannelStrip::instrumentSelectRequested,
                 this, &MixerView::instrumentSelectRequested);
         strip->setSelected(track == selectedTrack_);
+        strip->refresh();   // arm, mute and solo as saved
         stripLayout_->addWidget(strip);
         strips_.push_back(strip);
     }

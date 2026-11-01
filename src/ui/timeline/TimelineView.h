@@ -7,6 +7,9 @@
 #include "FolderHeaderWidget.h"
 #include "AutomationLaneItem.h"
 #include "AutomationLaneHeader.h"
+#include "TakeLanes.h"
+#include "RecordingPreview.h"
+#include "EditTool.h"
 #include "MarkerTempoLane.h"
 #include "VideoTrackLane.h"
 #include "engine/EditManager.h"
@@ -51,8 +54,18 @@ signals:
     void backgroundDragStarted(QPointF startScenePos);
     void backgroundDragUpdated(QPointF startScenePos, QPointF currentScenePos);
     void backgroundDragFinished(QPointF startScenePos, QPointF endScenePos);
+    // Range, Razor and Eraser act on whatever is under the mouse, clips included.
+    void toolDragStarted(QPointF startScenePos);
+    void toolDragUpdated(QPointF startScenePos, QPointF currentScenePos);
+    void toolDragFinished(QPointF startScenePos, QPointF endScenePos);
+    void toolClicked(QPointF scenePos, Qt::KeyboardModifiers mods);
 
 private:
+    // True when the active tool handles this press instead of the items.
+    bool toolTakesPress(QGraphicsSceneMouseEvent* event) const;
+    bool toolPressed_ = false;
+    bool toolDragging_ = false;
+    QPointF toolStartScenePos_;
     bool backgroundDragCandidate_ = false;
     bool backgroundDragging_ = false;
     QPointF backgroundDragStartScenePos_;
@@ -66,8 +79,16 @@ struct TrackLayoutInfo {
     bool collapsed = false;
     double automationLaneHeight = 80.0;
     te::AutomatableParameter* shownParam = nullptr;
+    bool takesVisible = false;
+    int takeLaneCount = 0;
+    // Take lanes sit between the clip row and the automation lane.
+    double takesHeight() const {
+        return (takesVisible && !collapsed) ? takeLaneCount * TakeLaneItem::kLaneHeight : 0.0;
+    }
+    double automationLaneY() const { return yOffset + clipRowHeight + takesHeight(); }
     double totalHeight() const {
-        return clipRowHeight + ((automationVisible && !collapsed) ? automationLaneHeight : 0.0);
+        return clipRowHeight + takesHeight()
+             + ((automationVisible && !collapsed) ? automationLaneHeight : 0.0);
     }
 };
 
@@ -100,6 +121,7 @@ signals:
     void splitHandsRequested(te::AudioTrack* track);
     void trackSelected(te::AudioTrack* track);
     void selectedClipsDeleted();
+    void editToolChanged(EditTool tool);
 
 public slots:
     void onTracksChanged();
@@ -118,6 +140,19 @@ public slots:
     bool isMarkerTempoLaneVisible() const;
     bool isVideoLaneVisible() const;
     void selectAllClips();
+    void selectClipsAfterPlayhead();
+    // Deletes the time selection if there is one, else the selected clips.
+    void deleteSelection(bool ripple);
+    void setEditTool(EditTool tool);
+    // Moves the selected clips (or the time selection) one grid step.
+    void nudgeSelection(int direction, bool fine);
+    bool hasTimeSelection() const { return selection_.active; }
+    // Empty when nothing is selected.
+    tracktion::TimeRange timeSelectionRange() const
+    {
+        return selection_.active ? selectionTimeRange() : tracktion::TimeRange();
+    }
+    void loopTimeSelection();
     VideoTrackLane* videoLane() const { return videoLane_; }
 
 private:
@@ -125,6 +160,7 @@ private:
     void rebuildTrackHeaders();
     void drawGridLines();
     void updatePlayhead();
+    void updateRecordingPreviews();
     void syncHeaderScroll();
     void handleFileDrop(const QString& path, double beat, int trackIndex);
     void handleEmptyAreaDoubleClick(double sceneX, double sceneY);
@@ -182,11 +218,46 @@ private:
     std::vector<ClipboardEntry> clipboardEntries_;
     int clipboardSourceTrackIndex_ = 0;
 
+    // Time selection across tracks: the Range tool, or a drag on empty space.
+    struct TimeSelection {
+        bool active = false;
+        double startBeat = 0.0;
+        double endBeat = 0.0;
+        std::vector<te::EditItemID> tracks;   // top to bottom
+    };
+    TimeSelection selection_;
+    QGraphicsRectItem* selectionItem_ = nullptr;
+    bool rangeFromBackground_ = false;   // a Smart-tool drag on empty space
+    double selectionAnchorBeat_ = 0.0;
+    int selectionAnchorTrack_ = 0;
+    // A copied range: whole clips, trimmed to the range when pasted.
+    struct RangeClipboard {
+        bool valid = false;
+        double startSecs = 0.0;
+        double lengthSecs = 0.0;
+        std::vector<std::pair<int, juce::ValueTree>> clips;   // (track offset, clip state)
+        int firstTrack = 0;   // display index the range started on
+    };
+    RangeClipboard rangeClipboard_;
+
+    void beginTimeSelection(QPointF scenePos);
+    void updateTimeSelection(QPointF scenePos);
+    void clearTimeSelection();
+    void updateSelectionOverlay();
+    juce::Array<te::AudioTrack*> selectionTracks() const;
+    tracktion::TimeRange selectionTimeRange() const;
+    void deleteTimeSelection(bool ripple);
+    void handleToolClick(QPointF scenePos, Qt::KeyboardModifiers mods);
+    ClipItem* clipItemAt(QPointF scenePos) const;
+    std::vector<te::Clip*> withLinkedClips(const std::vector<te::Clip*>& clips) const;
+
     // Automation lane state
     std::vector<TrackLayoutInfo> layout_;
     std::vector<AutomationLaneItem*> automationLaneItems_;
     std::vector<AutomationLaneHeader*> automationLaneHeaders_;
     std::vector<QGraphicsRectItem*> laneResizeHandles_;
+    std::vector<TakeLaneItem*> takeLaneItems_;
+    std::vector<TakeLanesHeader*> takeLaneHeaders_;
 
     void rebuildLayout();
     void updateLoopOverlay();
@@ -201,9 +272,14 @@ private:
     double trackYOffset(int trackIndex) const;
     void cleanupAutomationItems();
     void rebuildAutomationLanes(double sceneWidth);
+    void toggleTakes(te::AudioTrack* track, bool visible);
+    void cleanupTakeLaneItems();
+    void rebuildTakeLanes(double sceneWidth);
 
     // Track transport state for automation refresh
     bool wasPlaying_ = false;
+    std::map<te::EditItemID, RecordingPreviewItem*> recordingPreviews_;
+    std::map<te::EditItemID, LooperPrintPreviewItem*> looperPreviews_;
 
     // Folder divider positions in the scene
     struct FolderDividerInfo {

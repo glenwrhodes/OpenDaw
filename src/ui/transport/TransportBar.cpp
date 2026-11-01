@@ -5,7 +5,10 @@
 #include <QDialog>
 #include <QFrame>
 #include <QGridLayout>
+#include <QMenu>
+#include <QActionGroup>
 #include <QSettings>
+#include <functional>
 #include <QVBoxLayout>
 #include <cmath>
 
@@ -66,6 +69,45 @@ TransportBar::TransportBar(EditManager* editMgr, QWidget* parent)
         + QString("QPushButton { color: %1; } QPushButton:checked { color: white; }")
               .arg(theme.transportRecord.name()));
 
+    // Punch: click toggles it, the arrow holds pre-roll and post-roll.
+    punchBtn_ = new QToolButton(this);
+    punchBtn_->setText("Punch");
+    punchBtn_->setAccessibleName("Punch In/Out Recording");
+    punchBtn_->setToolTip("Punch in/out: record only inside the range on the ruler.\n"
+                          "Plays a pre-roll first and stops after the post-roll (set them "
+                          "with the arrow).");
+    punchBtn_->setCheckable(true);
+    punchBtn_->setPopupMode(QToolButton::MenuButtonPopup);
+    punchBtn_->setFixedSize(74, kRowHeight);
+    {
+        const QColor& active = theme.transportRecord;
+        const QColor checkedText = active.lightnessF() > 0.6 ? QColor(20, 20, 22) : QColor(Qt::white);
+        punchBtn_->setStyleSheet(
+            QString("QToolButton { background: %1; color: %2; border: 1px solid %3; "
+                    "border-radius: 4px; font-weight: bold; font-size: 10px; padding-right: 12px; }"
+                    "QToolButton:hover { background: %4; border-color: %5; }"
+                    "QToolButton:checked { background: %6; color: %8; border-color: %7; }"
+                    "QToolButton::menu-button { border: none; width: 14px; }"
+                    "QToolButton::menu-arrow { image: url(%9); width: 8px; height: 5px; }")
+                .arg(theme.background.name(), theme.text.name(), theme.separator.name(),
+                     theme.surfaceLight.name(), theme.border.name(),
+                     active.name(), active.darker(130).name(), checkedText.name(),
+                     ThemeManager::dropDownArrowPath(theme.text)));
+    }
+    buildPunchMenu();
+    punchBtn_->setChecked(editMgr_->isPunchEnabled());
+    connect(punchBtn_, &QToolButton::toggled, this, [this](bool on) {
+        if (!editMgr_ || !editMgr_->edit()) return;
+        editMgr_->setPunchEnabled(on);
+        // Refused while recording: show the real state.
+        QSignalBlocker block(punchBtn_);
+        punchBtn_->setChecked(editMgr_->isPunchEnabled());
+    });
+    connect(editMgr_, &EditManager::punchChanged, this, [this](bool on) {
+        QSignalBlocker block(punchBtn_);
+        punchBtn_->setChecked(on);
+    });
+
     countInBtn_ = new QPushButton("Count-in", this);
     countInBtn_->setAccessibleName("Count-In Before Recording");
     countInBtn_->setToolTip("Count-in before recording");
@@ -125,6 +167,7 @@ TransportBar::TransportBar(EditManager* editMgr, QWidget* parent)
     layout->addWidget(recordBtn_);
     layout->addSpacing(6);
     layout->addWidget(loopBtn_);
+    layout->addWidget(punchBtn_);
     layout->addWidget(metronomeBtn_);
     layout->addWidget(countInBtn_);
     layout->addWidget(countInCombo_);
@@ -380,15 +423,33 @@ void TransportBar::onRecord()
 {
     if (!editMgr_ || !editMgr_->edit()) return;
     auto& t = editMgr_->transport();
-    if (isRecording_) {
-        t.stop(false, false);
-        isRecording_ = false;
-    } else {
-        t.record(false);
-        isRecording_ = true;
-    }
+    editMgr_->toggleRecording();
+    isRecording_ = t.isRecording();
     recordBtn_->setChecked(isRecording_);
     playBtn_->setChecked(t.isPlaying());
+}
+
+void TransportBar::buildPunchMenu()
+{
+    auto* menu = new QMenu(punchBtn_);
+    menu->setAccessibleName("Punch Options");
+    auto addRollMenu = [&](const QString& title, int current, std::function<void(int)> apply) {
+        auto* sub = menu->addMenu(title);
+        auto* group = new QActionGroup(sub);
+        for (int bars : {0, 1, 2, 4}) {
+            auto* a = sub->addAction(bars == 0 ? QString("Off")
+                                               : QString("%1 Bar%2").arg(bars).arg(bars == 1 ? "" : "s"));
+            a->setCheckable(true);
+            a->setChecked(bars == current);
+            group->addAction(a);
+            connect(a, &QAction::triggered, this, [apply, bars]() { apply(bars); });
+        }
+    };
+    addRollMenu("Pre-roll", editMgr_->preRollBars(),
+                [this](int bars) { editMgr_->setPreRollBars(bars); });
+    addRollMenu("Post-roll", editMgr_->postRollBars(),
+                [this](int bars) { editMgr_->setPostRollBars(bars); });
+    punchBtn_->setMenu(menu);
 }
 
 void TransportBar::onLoop()
@@ -397,20 +458,13 @@ void TransportBar::onLoop()
     auto& t = editMgr_->transport();
     bool enabling = !t.looping.get();
 
-    // If enabling loop with no range set, create a default range of 4 bars from playhead
     if (enabling) {
-        auto p1 = t.loopPoint1.get();
-        auto p2 = t.loopPoint2.get();
-        if (p1 == p2) {
-            auto& ts = editMgr_->edit()->tempoSequence;
-            double playBeat = ts.toBeats(t.getPosition()).inBeats();
-            double beatsPerBar = editMgr_->getTimeSigNumerator();
-            double barStart = std::floor(playBeat / beatsPerBar) * beatsPerBar;
-            double loopIn = std::max(0.0, barStart);
-            double loopOut = loopIn + beatsPerBar * 4.0;
-            t.loopPoint1 = ts.toTime(tracktion::BeatPosition::fromBeats(loopIn));
-            t.loopPoint2 = ts.toTime(tracktion::BeatPosition::fromBeats(loopOut));
+        // Loop and punch share the range and can't both be on.
+        if (editMgr_->isPunchEnabled()) {
+            if (t.isRecording()) return;
+            editMgr_->setPunchEnabled(false);
         }
+        editMgr_->ensureLoopRange();
     }
 
     t.looping.setValue(enabling, nullptr);
@@ -573,6 +627,9 @@ void TransportBar::updatePosition()
             .arg(ticks, 3, 10, QChar('0')));
 
     playBtn_->setChecked(editMgr_->transport().isPlaying());
+    // Recording also stops on its own (post-roll, the R key, the AI).
+    isRecording_ = editMgr_->transport().isRecording();
+    recordBtn_->setChecked(isRecording_);
 
     // Re-enable looping once the playhead reaches the loop region
     if (deferredLoopActivation_ && editMgr_->transport().isPlaying()) {

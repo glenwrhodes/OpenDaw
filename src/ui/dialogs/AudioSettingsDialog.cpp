@@ -45,6 +45,34 @@ AudioSettingsDialog::AudioSettingsDialog(AudioEngine& engine, QWidget* parent)
     driverNote_->setStyleSheet("font-size: 10px; color: gray; padding: 4px 8px;");
     mainLayout->addWidget(driverNote_);
 
+    auto* recGroup = new QGroupBox("Recording", this);
+    recGroup->setAccessibleName("Recording Settings");
+    auto* recForm = new QFormLayout(recGroup);
+    QSettings settings;
+
+    monitorCombo_ = new QComboBox(this);
+    monitorCombo_->setAccessibleName("Input monitoring");
+    monitorCombo_->addItem("Off", 0);
+    monitorCombo_->addItem("Auto (while the track is armed)", 1);
+    monitorCombo_->addItem("Always", 2);
+    monitorCombo_->setToolTip("When you hear an input through its track. Use Off when "
+                              "you monitor through your interface's direct monitoring.");
+    monitorCombo_->setCurrentIndex(
+        std::max(0, monitorCombo_->findData(settings.value("audio/monitorMode", 1).toInt())));
+    recForm->addRow("Input Monitoring:", monitorCombo_);
+
+    recordOffsetSpin_ = new QSpinBox(this);
+    recordOffsetSpin_->setAccessibleName("Recording offset in milliseconds");
+    recordOffsetSpin_->setRange(-500, 500);
+    recordOffsetSpin_->setSuffix(" ms");
+    recordOffsetSpin_->setToolTip("Shifts new recordings to line up with what you played "
+                                  "along to. Added to the driver's reported latency; raise it "
+                                  "if recordings land late, lower it if they land early.");
+    recordOffsetSpin_->setValue(settings.value("audio/recordOffsetMs", 0).toInt());
+    recForm->addRow("Recording Offset:", recordOffsetSpin_);
+
+    mainLayout->addWidget(recGroup);
+
     auto* btnLayout = new QHBoxLayout();
     btnLayout->addStretch();
 
@@ -245,6 +273,13 @@ void AudioSettingsDialog::updateDriverNote()
 
 void AudioSettingsDialog::applySettings()
 {
+    {
+        QSettings settings;
+        settings.setValue("audio/monitorMode", monitorCombo_->currentData().toInt());
+        settings.setValue("audio/recordOffsetMs", recordOffsetSpin_->value());
+    }
+    engine_.applyInputSettings();
+
     auto& adm = engine_.deviceManager().deviceManager;
 
     juce::AudioDeviceManager::AudioDeviceSetup setup;

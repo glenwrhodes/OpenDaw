@@ -16,6 +16,7 @@ TimeRuler::TimeRuler(QWidget* parent)
     setFixedHeight(28);
     setCursor(Qt::PointingHandCursor);
     setContextMenuPolicy(Qt::DefaultContextMenu);
+    setMouseTracking(true);   // resize cursor over the loop/punch handles
 }
 
 double TimeRuler::xToBeat(int x) const
@@ -44,22 +45,35 @@ void TimeRuler::setLoopEnabled(bool enabled)
     update();
 }
 
+void TimeRuler::setPunchEnabled(bool enabled)
+{
+    punchEnabled_ = enabled;
+    update();
+}
+
+bool TimeRuler::regionVisible() const
+{
+    return (loopEnabled_ || punchEnabled_) && loopOutBeat_ > loopInBeat_;
+}
+
 void TimeRuler::paintEvent(QPaintEvent*)
 {
     auto& theme = ThemeManager::instance().current();
     QPainter p(this);
     p.fillRect(rect(), theme.surface);
 
-    // Loop region overlay (drawn first, behind everything else)
-    if (loopEnabled_ && loopOutBeat_ > loopInBeat_) {
+    // Loop region overlay (drawn first, behind everything else). The same
+    // range is the punch range, drawn in the record colour while punch is on.
+    if (regionVisible()) {
         double lx1 = beatToX(loopInBeat_);
         double lx2 = beatToX(loopOutBeat_);
-        QColor loopColor = theme.accent;
+        const QColor regionColor = punchEnabled_ ? theme.transportRecord : theme.accent;
+        QColor loopColor = regionColor;
         loopColor.setAlpha(40);
         p.fillRect(QRectF(lx1, 0, lx2 - lx1, height()), loopColor);
 
         // Loop boundary lines
-        QColor boundaryColor = theme.accent;
+        QColor boundaryColor = regionColor;
         boundaryColor.setAlpha(180);
         p.setPen(QPen(boundaryColor, 1.5));
         p.drawLine(QPointF(lx1, 0), QPointF(lx1, height()));
@@ -71,7 +85,7 @@ void TimeRuler::paintEvent(QPaintEvent*)
         flagIn.lineTo(lx1 + 7, 0);
         flagIn.lineTo(lx1, 9);
         flagIn.closeSubpath();
-        p.fillPath(flagIn, theme.accent);
+        p.fillPath(flagIn, regionColor);
 
         // Loop-out flag (downward triangle at top-right, mirrored)
         QPainterPath flagOut;
@@ -79,7 +93,7 @@ void TimeRuler::paintEvent(QPaintEvent*)
         flagOut.lineTo(lx2 - 7, 0);
         flagOut.lineTo(lx2, 9);
         flagOut.closeSubpath();
-        p.fillPath(flagOut, theme.accent);
+        p.fillPath(flagOut, regionColor);
     }
 
     QFont f = font();
@@ -140,7 +154,7 @@ void TimeRuler::mousePressEvent(QMouseEvent* event)
         double clickX = event->pos().x();
 
         // Check if clicking near a loop handle
-        if (loopEnabled_ && loopOutBeat_ > loopInBeat_) {
+        if (regionVisible()) {
             double inX = beatToX(loopInBeat_);
             double outX = beatToX(loopOutBeat_);
 
@@ -193,7 +207,7 @@ void TimeRuler::mouseMoveEvent(QMouseEvent* event)
     }
 
     // Update cursor when hovering near loop handles
-    if (loopEnabled_ && loopOutBeat_ > loopInBeat_ && !(event->buttons() & Qt::LeftButton)) {
+    if (regionVisible() && !(event->buttons() & Qt::LeftButton)) {
         double mx = event->pos().x();
         double inX = beatToX(loopInBeat_);
         double outX = beatToX(loopOutBeat_);
@@ -223,8 +237,8 @@ void TimeRuler::contextMenuEvent(QContextMenuEvent* event)
     QMenu menu(this);
     menu.setAccessibleName("Time Ruler Context Menu");
 
-    auto* setInAction = menu.addAction("Set Loop In Here");
-    auto* setOutAction = menu.addAction("Set Loop Out Here");
+    auto* setInAction = menu.addAction(punchEnabled_ ? "Set Punch In Here" : "Set Loop In Here");
+    auto* setOutAction = menu.addAction(punchEnabled_ ? "Set Punch Out Here" : "Set Loop Out Here");
 
     auto* chosen = menu.exec(event->globalPos());
     if (chosen == setInAction) {

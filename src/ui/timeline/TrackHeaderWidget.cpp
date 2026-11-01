@@ -182,6 +182,22 @@ TrackHeaderWidget::TrackHeaderWidget(te::AudioTrack* track, EditManager* editMgr
         automationVisible_ = checked;
         emit automationToggled(track_, checked);
     });
+
+    // Take lanes: only audio tracks record takes.
+    if (editMgr_ && !editMgr_->isMidiTrack(track_) && !editMgr_->isBusTrack(track_)) {
+        const int takeCount = int(editMgr_->getTakes(track_).size());
+        takesBtn_ = makeToggle(QString(icons::mi::Layers), "Toggle Take Lanes",
+                               takeCount > 0
+                                   ? QString("Show this track's %1 take%2 to comp them")
+                                         .arg(takeCount).arg(takeCount == 1 ? "" : "s")
+                                   : QString("Take lanes: each recording pass becomes a take "
+                                             "you can comp from. None yet."),
+                               theme.accent, &materialFont);
+        takesBtn_->setEnabled(takeCount > 0);
+        connect(takesBtn_, &QPushButton::toggled, this, [this](bool checked) {
+            emit takesToggled(track_, checked);
+        });
+    }
     buttonLayout->addStretch();
     column->addWidget(buttonRow);
 
@@ -444,6 +460,13 @@ void TrackHeaderWidget::refreshNameStyle()
     nameLabel_->setStyleSheet(
         QString("QLabel { color: %1; font-size: 11px; font-weight: bold; background: transparent; }")
             .arg(colour.name()));
+}
+
+void TrackHeaderWidget::setTakesVisible(bool visible)
+{
+    if (!takesBtn_) return;
+    QSignalBlocker block(takesBtn_);
+    takesBtn_->setChecked(visible && takesBtn_->isEnabled());
 }
 
 void TrackHeaderWidget::setAutomationVisible(bool visible)

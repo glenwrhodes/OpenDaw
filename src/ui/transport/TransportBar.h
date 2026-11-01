@@ -9,6 +9,7 @@
 #include <QSpinBox>
 #include <QTimer>
 #include <QComboBox>
+#include <QToolButton>
 
 namespace OpenDaw {
 
@@ -42,6 +43,7 @@ private:
     void applyButtonStyle(QPushButton* btn, const QColor& activeColor);
     void updateEngineButtonStyle();
     void syncCountInToEngine();
+    void buildPunchMenu();
 
     EditManager* editMgr_;
 
@@ -50,6 +52,7 @@ private:
     QPushButton* stopBtn_;
     QPushButton* recordBtn_;
     QPushButton* loopBtn_;
+    QToolButton* punchBtn_;
     QPushButton* metronomeBtn_;
     QPushButton* countInBtn_;
     QComboBox*   countInCombo_;

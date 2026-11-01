@@ -1,4 +1,5 @@
 #include "EditManager.h"
+#include "LooperEngine.h"
 #include "utils/FFmpegUtils.h"
 #include "utils/ThemeManager.h"
 #include <juce_audio_formats/juce_audio_formats.h>
@@ -12,6 +13,7 @@
 #include <QFile>
 #include <QCryptographicHash>
 #include <QDateTime>
+#include <QSettings>
 
 namespace OpenDaw {
 
@@ -44,6 +46,9 @@ EditManager::EditManager(AudioEngine& engine, QObject* parent)
     : QObject(parent), audioEngine_(engine)
 {
     connect(&autosaveTimer_, &QTimer::timeout, this, &EditManager::performAutosave);
+    connect(&recordWatchTimer_, &QTimer::timeout, this, &EditManager::checkPostRoll);
+    recordingListener_ = std::make_unique<RecordingListener>(*this);
+    looper_ = std::make_unique<LooperEngine>(*this);
     createDefaultEdit();
 }
 
@@ -59,11 +64,14 @@ void EditManager::teardownCurrentEdit()
 
     qDebug() << "[teardown] emitting aboutToChangeEdit";
     emit aboutToChangeEdit();
+    if (looper_) looper_->detach();
 
     qDebug() << "[teardown] stopping transport";
     auto& transport = edit_->getTransport();
+    recordWatchTimer_.stop();
     if (transport.isPlaying())
         transport.stop(false, false);
+    transport.removeListener(recordingListener_.get());
 
     qDebug() << "[teardown] freeing playback context";
     transport.freePlaybackContext();
@@ -101,6 +109,8 @@ void EditManager::createDefaultEdit()
     enableAllWaveInputDevices();
     qDebug() << "[createDefaultEdit] wave inputs enabled";
     edit_->getTransport().ensureContextAllocated();
+    attachRecordingListener();
+    looper_->attach();
     qDebug() << "[createDefaultEdit] context allocated";
 
     auto& arm = edit_->getAutomationRecordManager();
@@ -162,8 +172,9 @@ bool EditManager::loadEdit(const juce::File& file)
 
     qDebug() << "[loadEdit] allocating playback context";
     edit_->getTransport().ensureContextAllocated();
+    attachRecordingListener();
+    looper_->attach();
     qDebug() << "[loadEdit] playback context ready";
-
     auto& arm = edit_->getAutomationRecordManager();
     arm.setReadingAutomation(true);
     arm.setWritingAutomation(false);
@@ -190,6 +201,7 @@ bool EditManager::saveEdit()
     if (!edit_ || currentFile_ == juce::File())
         return false;
     unfreezeAllTracks();
+    looper_->saveState(currentFile_);
     te::EditFileOperations(*edit_).save(true, true, false);
     clearAutosave();
     hasUnsavedChanges_ = false;
@@ -202,6 +214,7 @@ bool EditManager::saveEditAs(const juce::File& file)
         return false;
     unfreezeAllTracks();
     edit_->editFileRetriever = [file]() { return file; };
+    looper_->saveState(file);
     te::EditFileOperations(*edit_).save(true, true, false);
     currentFile_ = file;
     clearAutosave();
@@ -987,7 +1000,7 @@ void EditManager::propagateClipPosition(te::MidiClip& primary)
 
         if (wasLinked) {
             mc->setStart(startTime, false, true);
-            mc->setEnd(endTime, false);
+            mc->setEnd(endTime, true);
         }
     }
 }
@@ -1024,6 +1037,7 @@ void EditManager::enableAllWaveInputDevices()
             dev->setEnabled(true);
         }
     }
+    audioEngine_.applyInputSettings();
 }
 
 QList<InputSource> EditManager::getAvailableInputSources() const
@@ -1157,6 +1171,528 @@ bool EditManager::isTrackRecordEnabled(te::AudioTrack* track) const
             return instance->isRecordingEnabled(track->itemID);
     }
     return false;
+}
+
+// ── Recording: punch, pre-roll, post-roll ────────────────────────────────────
+
+namespace {
+const juce::Identifier kTakesTree("OPENDAW_TAKES");
+const juce::Identifier kTakeNode("TAKE");
+const juce::Identifier kTakeIdProp("id");
+const juce::Identifier kTakeNameProp("name");
+const juce::Identifier kTakeFileProp("file");
+const juce::Identifier kTakeStartProp("start");
+const juce::Identifier kTakeOffsetProp("offset");
+const juce::Identifier kTakeLengthProp("length");
+const juce::Identifier kNextTakeIdProp("nextId");
+const juce::Identifier kClipTakeIdProp("opendawTakeId");
+constexpr double kJunctionFadeSecs = 0.004;   // keeps comp joins from clicking
+constexpr double kTimeEpsilon = 0.001;
+}
+
+void EditManager::startRecording()
+{
+    if (!edit_ || engineSuspended_) return;
+    auto& t = edit_->getTransport();
+    if (t.isRecording()) return;
+
+    const bool punch = isPunchEnabled();
+    if (punch) {
+        // Tracktion refuses to record in loop and punch mode at once.
+        if (t.looping.get())
+            t.looping.setValue(false, nullptr);
+        loopActivationDeferred_ = false;
+        ensureLoopRange();
+        const int bars = preRollBars();
+        if (!t.isPlaying() && bars > 0) {
+            auto& ts = edit_->tempoSequence;
+            const double inBeat = ts.toBeats(t.loopPoint1.get()).inBeats();
+            const double startBeat = std::max(0.0, inBeat - bars * getTimeSigNumerator());
+            t.setPosition(ts.toTime(tracktion::BeatPosition::fromBeats(startBeat)));
+        }
+    }
+
+    t.record(false);
+    if (punch)
+        recordWatchTimer_.start(15);
+}
+
+void EditManager::toggleRecording()
+{
+    if (!edit_) return;
+    auto& t = edit_->getTransport();
+    if (t.isRecording())
+        t.stop(false, false);
+    else
+        startRecording();
+}
+
+void EditManager::checkPostRoll()
+{
+    if (!edit_ || !edit_->getTransport().isPlaying()) {
+        recordWatchTimer_.stop();
+        return;
+    }
+    auto& t = edit_->getTransport();
+    if (!t.isRecording() || !isPunchEnabled()) return;
+
+    auto& ts = edit_->tempoSequence;
+    const double stopBeat = ts.toBeats(t.loopPoint2.get()).inBeats()
+                          + postRollBars() * getTimeSigNumerator();
+    if (ts.toBeats(t.getPosition()).inBeats() >= stopBeat) {
+        recordWatchTimer_.stop();
+        t.stop(false, false);
+    }
+}
+
+bool EditManager::isPunchEnabled() const
+{
+    return edit_ && edit_->recordingPunchInOut.get();
+}
+
+void EditManager::setPunchEnabled(bool enabled)
+{
+    if (!edit_ || isPunchEnabled() == enabled) return;
+    auto& t = edit_->getTransport();
+    // The mode is fixed once a recording starts.
+    if (t.isRecording()) return;
+    if (enabled) {
+        ensureLoopRange();
+        if (t.looping.get())
+            t.looping.setValue(false, nullptr);
+        loopActivationDeferred_ = false;
+    }
+    edit_->recordingPunchInOut.setValue(enabled, nullptr);
+    emit punchChanged(enabled);
+}
+
+int EditManager::preRollBars() const
+{
+    return std::clamp(QSettings().value("transport/preRollBars", 1).toInt(), 0, 4);
+}
+
+void EditManager::setPreRollBars(int bars)
+{
+    QSettings().setValue("transport/preRollBars", std::clamp(bars, 0, 4));
+}
+
+int EditManager::postRollBars() const
+{
+    return std::clamp(QSettings().value("transport/postRollBars", 1).toInt(), 0, 4);
+}
+
+void EditManager::setPostRollBars(int bars)
+{
+    QSettings().setValue("transport/postRollBars", std::clamp(bars, 0, 4));
+}
+
+void EditManager::ensureLoopRange()
+{
+    if (!edit_) return;
+    auto& t = edit_->getTransport();
+    if (t.loopPoint2.get() > t.loopPoint1.get()) return;
+
+    auto& ts = edit_->tempoSequence;
+    const double playBeat = ts.toBeats(t.getPosition()).inBeats();
+    const double beatsPerBar = getTimeSigNumerator();
+    const double loopIn = std::max(0.0, std::floor(playBeat / beatsPerBar) * beatsPerBar);
+    t.loopPoint1 = ts.toTime(tracktion::BeatPosition::fromBeats(loopIn));
+    t.loopPoint2 = ts.toTime(tracktion::BeatPosition::fromBeats(loopIn + beatsPerBar * 4.0));
+}
+
+// ── Takes and comping ────────────────────────────────────────────────────────
+
+void EditManager::attachRecordingListener()
+{
+    if (edit_)
+        edit_->getTransport().addListener(recordingListener_.get());
+}
+
+void EditManager::RecordingListener::recordingFinished(
+    te::InputDeviceInstance&, te::EditItemID,
+    const juce::ReferenceCountedArray<te::Clip>& clips)
+{
+    std::vector<te::EditItemID> ids;
+    te::EditItemID trackId;
+    for (auto* c : clips) {
+        if (dynamic_cast<te::WaveAudioClip*>(c) == nullptr || c->getTrack() == nullptr)
+            continue;
+        trackId = c->getTrack()->itemID;
+        ids.push_back(c->itemID);
+    }
+    if (ids.empty()) return;
+    // After Tracktion has finished inserting the clips.
+    QTimer::singleShot(0, &owner, [o = &owner, trackId, ids]() {
+        o->processRecordedClips(trackId, ids);
+    });
+}
+
+void EditManager::processRecordedClips(te::EditItemID trackId,
+                                       const std::vector<te::EditItemID>& clipIds)
+{
+    auto* track = findAudioTrack(trackId);
+    if (!track) return;
+
+    int added = 0;
+    for (auto id : clipIds)
+        if (auto* wc = dynamic_cast<te::WaveAudioClip*>(track->findClipForID(id)))
+            added += registerRecordedClip(*track, *wc, clipIds);
+    if (added == 0) return;
+
+    emit takesChanged(track, added);
+    markDirtyAndNotify();
+}
+
+int EditManager::registerRecordedClip(te::AudioTrack& track, te::WaveAudioClip& clip,
+                                      const std::vector<te::EditItemID>& justRecorded)
+{
+    auto* um = &edit_->getUndoManager();
+    const auto pos = clip.getPosition();
+    const double start = pos.getStart().inSeconds();
+    const double offset = pos.getOffset().inSeconds();
+    const double length = pos.getLength().inSeconds();
+    if (length <= 0.0) return 0;
+
+    // Loop recording leaves one file per pass in the clip's TAKES list (the
+    // first pass is listed twice); a plain pass has only the clip's own file.
+    std::vector<juce::File> files;
+    const auto tracktionTakes = clip.state.getChildWithName(te::IDs::TAKES);
+    for (int i = 0; i < tracktionTakes.getNumChildren(); ++i) {
+        auto f = te::SourceFileReference::findFileFromString(
+            *edit_, tracktionTakes.getChild(i)[te::IDs::source].toString());
+        if (f.existsAsFile() && std::find(files.begin(), files.end(), f) == files.end())
+            files.push_back(f);
+    }
+    const bool loopPasses = !files.empty();
+    if (files.empty())
+        files.push_back(clip.getOriginalFile());
+
+    // Audio the recording covers stays reachable as a take of its own, then
+    // makes way for the new recording.
+    const tracktion::TimeRange range(pos.getStart(), pos.getEnd());
+    juce::Array<te::WaveAudioClip*> covered;
+    for (auto* c : track.getClips()) {
+        auto* wc = dynamic_cast<te::WaveAudioClip*>(c);
+        if (wc == nullptr || wc == &clip
+            || std::find(justRecorded.begin(), justRecorded.end(), c->itemID) != justRecorded.end())
+            continue;
+        if (c->getPosition().time.overlaps(range))
+            covered.add(wc);
+    }
+    for (auto* old : covered) {
+        if (clipTakeId(old) == 0) {
+            const auto op = old->getPosition();
+            const int id = addTakeEntry(track, old->getOriginalFile(), op.getStart().inSeconds(),
+                                        op.getOffset().inSeconds(), op.getLength().inSeconds(),
+                                        QString::fromStdString(old->getName().toStdString()));
+            old->state.setProperty(kClipTakeIdProp, id, um);
+        }
+        te::deleteRegion(*old, range);
+    }
+
+    int chosenId = 0;
+    juce::File chosenFile;
+    for (const auto& f : files) {
+        const int id = addTakeEntry(track, f, start, offset, length);
+        // A pass cut short by stopping is kept, but the comp gets the last
+        // complete one.
+        const double fileLength = te::AudioFile(edit_->engine, f).getLength();
+        if (chosenId == 0 || fileLength >= offset + length - 0.1) {
+            chosenId = id;
+            chosenFile = f;
+        }
+    }
+
+    if (loopPasses)
+        clip.clearTakes();
+    if (chosenFile != clip.getOriginalFile())
+        clip.getSourceFileReference().setToDirectFileReference(chosenFile, false);
+    clip.state.setProperty(kClipTakeIdProp, chosenId, um);
+    for (const auto& take : getTakes(&track))
+        if (take.id == chosenId)
+            clip.setName(juce::String(take.name.toStdString()));
+
+    return int(files.size());
+}
+
+int EditManager::addTakeEntry(te::AudioTrack& track, const juce::File& file, double start,
+                              double offset, double length, const QString& name)
+{
+    auto* um = &edit_->getUndoManager();
+    auto tree = track.state.getOrCreateChildWithName(kTakesTree, um);
+    const int id = std::max(1, int(tree.getProperty(kNextTakeIdProp, 1)));
+    tree.setProperty(kNextTakeIdProp, id + 1, um);
+
+    juce::ValueTree node(kTakeNode);
+    node.setProperty(kTakeIdProp, id, nullptr);
+    node.setProperty(kTakeNameProp, name.isEmpty() ? "Take " + juce::String(id)
+                                                   : juce::String(name.toStdString()), nullptr);
+    node.setProperty(kTakeFileProp, file.getFullPathName(), nullptr);
+    node.setProperty(kTakeStartProp, start, nullptr);
+    node.setProperty(kTakeOffsetProp, offset, nullptr);
+    node.setProperty(kTakeLengthProp, length, nullptr);
+    tree.appendChild(node, um);
+    return id;
+}
+
+std::vector<EditManager::TakeInfo> EditManager::getTakes(te::AudioTrack* track) const
+{
+    std::vector<TakeInfo> takes;
+    if (!edit_ || !track) return takes;
+
+    const auto tree = track->state.getChildWithName(kTakesTree);
+    for (int i = 0; i < tree.getNumChildren(); ++i) {
+        const auto node = tree.getChild(i);
+        const auto path = node[kTakeFileProp].toString();
+        if (!node.hasType(kTakeNode) || !juce::File::isAbsolutePath(path)) continue;
+        TakeInfo info;
+        info.id = node[kTakeIdProp];
+        info.name = QString::fromStdString(node[kTakeNameProp].toString().toStdString());
+        info.file = juce::File(path);
+        info.start = node[kTakeStartProp];
+        info.offset = node[kTakeOffsetProp];
+        info.length = node[kTakeLengthProp];
+        if (info.id > 0 && info.length > 0.0)
+            takes.push_back(info);
+    }
+    return takes;
+}
+
+int EditManager::clipTakeId(const te::Clip* clip)
+{
+    return clip ? int(clip->state.getProperty(kClipTakeIdProp, 0)) : 0;
+}
+
+std::vector<std::pair<double, double>> EditManager::takeUsedRanges(te::AudioTrack* track,
+                                                                   int takeId) const
+{
+    std::vector<std::pair<double, double>> ranges;
+    if (!track) return ranges;
+    for (auto* c : track->getClips())
+        if (clipTakeId(c) == takeId)
+            ranges.emplace_back(c->getPosition().getStart().inSeconds(),
+                                c->getPosition().getEnd().inSeconds());
+    return ranges;
+}
+
+te::AudioTrack* EditManager::findAudioTrack(te::EditItemID id) const
+{
+    if (!edit_) return nullptr;
+    return dynamic_cast<te::AudioTrack*>(te::findTrackForID(*edit_, id));
+}
+
+bool EditManager::compTake(te::AudioTrack& track, int takeId, double startSec, double endSec)
+{
+    if (!edit_) return false;
+    const auto takes = getTakes(&track);
+    auto it = std::find_if(takes.begin(), takes.end(),
+                           [takeId](const TakeInfo& t) { return t.id == takeId; });
+    if (it == takes.end() || !it->file.existsAsFile()) return false;
+    const auto take = *it;
+
+    const double t0 = std::max(std::min(startSec, endSec), take.start);
+    const double t1 = std::min(std::max(startSec, endSec), take.start + take.length);
+    if (t1 - t0 < 0.01) return false;
+
+    auto& um = edit_->getUndoManager();
+    um.beginNewTransaction("Comp " + juce::String(take.name.toStdString()));
+
+    const tracktion::TimeRange range(tracktion::TimePosition::fromSeconds(t0),
+                                     tracktion::TimePosition::fromSeconds(t1));
+    juce::Array<te::Clip*> covered;
+    for (auto* c : track.getClips())
+        if (c->getPosition().time.overlaps(range))
+            covered.add(c);
+    for (auto* c : covered)
+        te::deleteRegion(*c, range);
+
+    const double offset = take.offset + (t0 - take.start);
+    auto inserted = te::insertWaveClip(track, juce::String(take.name.toStdString()), take.file,
+                                       { range, tracktion::TimeDuration::fromSeconds(offset) },
+                                       te::DeleteExistingClips::no);
+    if (inserted == nullptr) return false;
+    inserted->getSourceFileReference().setToDirectFileReference(take.file, false);
+    inserted->state.setProperty(kClipTakeIdProp, takeId, &um);
+    te::WaveAudioClip* comp = inserted.get();
+
+    // The audio clip whose edge meets `comp`'s start (left) or end (right).
+    auto neighbour = [&](bool left) -> te::WaveAudioClip* {
+        const auto cp = comp->getPosition();
+        const double target = (left ? cp.getStart() : cp.getEnd()).inSeconds();
+        for (auto* c : track.getClips()) {
+            auto* w = dynamic_cast<te::WaveAudioClip*>(c);
+            if (w == nullptr || w == comp) continue;
+            const auto p = w->getPosition();
+            if (std::abs((left ? p.getEnd() : p.getStart()).inSeconds() - target) < kTimeEpsilon)
+                return w;
+        }
+        return nullptr;
+    };
+    // `second` carries on in the same file exactly where `first` stops.
+    auto continues = [](te::WaveAudioClip* first, te::WaveAudioClip* second) {
+        const auto a = first->getPosition();
+        const auto b = second->getPosition();
+        return clipTakeId(first) == clipTakeId(second)
+            && first->getOriginalFile() == second->getOriginalFile()
+            && !first->isLooping() && !second->isLooping()
+            && std::abs((a.getOffset() + a.getLength()).inSeconds() - b.getOffset().inSeconds())
+                   < kTimeEpsilon;
+    };
+
+    // Swiping more of a take that is already in the comp extends that piece
+    // instead of leaving a cut in it.
+    if (auto* left = neighbour(true); left && continues(left, comp)) {
+        const auto end = comp->getPosition().getEnd();
+        comp->removeFromParent();
+        left->setEnd(end, true);
+        comp = left;
+    }
+    if (auto* right = neighbour(false); right && continues(comp, right)) {
+        const auto end = right->getPosition().getEnd();
+        const auto fadeOut = right->getFadeOut();
+        right->removeFromParent();
+        comp->setEnd(end, true);
+        comp->setFadeOut(fadeOut);
+    }
+
+    const auto junction = tracktion::TimeDuration::fromSeconds(kJunctionFadeSecs);
+    const auto cp = comp->getPosition();
+    if (std::abs(cp.getStart().inSeconds() - t0) < kTimeEpsilon) {
+        if (comp->getFadeIn() < junction) comp->setFadeIn(junction);
+        if (auto* left = neighbour(true); left && left->getFadeOut() < junction)
+            left->setFadeOut(junction);
+    }
+    if (std::abs(cp.getEnd().inSeconds() - t1) < kTimeEpsilon) {
+        if (comp->getFadeOut() < junction) comp->setFadeOut(junction);
+        if (auto* right = neighbour(false); right && right->getFadeIn() < junction)
+            right->setFadeIn(junction);
+    }
+
+    edit_->restartPlayback();
+    emit takesChanged(&track, 0);
+    markDirtyAndNotify();
+    return true;
+}
+
+// ── Editing across tracks ────────────────────────────────────────────────────
+
+void EditManager::shiftClipsAfter(te::AudioTrack& track, tracktion::TimePosition from,
+                                  tracktion::TimeDuration delta)
+{
+    const auto edge = from - tracktion::TimeDuration::fromSeconds(kTimeEpsilon);
+    juce::Array<te::Clip*> toMove;
+    for (auto* c : track.getClips())
+        if (c->getPosition().getStart() >= edge)
+            toMove.add(c);
+    for (auto* c : toMove)
+        c->setStart(c->getPosition().getStart() + delta, false, true);
+}
+
+void EditManager::deleteTimeRange(const juce::Array<te::AudioTrack*>& tracks,
+                                  tracktion::TimeRange range, bool ripple)
+{
+    if (!edit_ || range.getLength().inSeconds() <= 0.0) return;
+    edit_->getUndoManager().beginNewTransaction(ripple ? "Ripple Delete" : "Delete Range");
+    for (auto* track : tracks) {
+        if (!track) continue;
+        track->deleteRegion(range, nullptr);
+        if (ripple)
+            shiftClipsAfter(*track, range.getEnd(),
+                            tracktion::TimeDuration::fromSeconds(-range.getLength().inSeconds()));
+    }
+    edit_->restartPlayback();
+    markDirtyAndNotify();
+}
+
+void EditManager::splitTracksAt(const juce::Array<te::AudioTrack*>& tracks,
+                                tracktion::TimePosition time)
+{
+    if (!edit_) return;
+    edit_->getUndoManager().beginNewTransaction("Split");
+    for (auto* track : tracks) {
+        if (!track) continue;
+        juce::Array<te::Clip*> toSplit;
+        for (auto* c : track->getClips()) {
+            const auto pos = c->getPosition();
+            if (time > pos.getStart() && time < pos.getEnd())
+                toSplit.add(c);
+        }
+        for (auto* c : toSplit)
+            track->splitClip(*c, time);
+    }
+    markDirtyAndNotify();
+}
+
+void EditManager::deleteClips(const std::vector<te::Clip*>& clips, bool ripple)
+{
+    if (!edit_ || clips.empty()) return;
+    edit_->getUndoManager().beginNewTransaction(ripple ? "Ripple Delete" : "Delete Clips");
+
+    // The gaps to close, per track, merged so overlapping or linked clips
+    // close their shared gap once.
+    std::map<te::AudioTrack*, std::vector<std::pair<double, double>>> gaps;
+    for (auto* c : clips)
+        if (auto* track = dynamic_cast<te::AudioTrack*>(c->getTrack()))
+            gaps[track].emplace_back(c->getPosition().getStart().inSeconds(),
+                                     c->getPosition().getEnd().inSeconds());
+    for (auto* c : clips)
+        c->removeFromParent();
+
+    if (ripple) {
+        for (auto& [track, ranges] : gaps) {
+            std::sort(ranges.begin(), ranges.end());
+            std::vector<std::pair<double, double>> merged;
+            for (const auto& r : ranges) {
+                if (!merged.empty() && r.first <= merged.back().second + kTimeEpsilon)
+                    merged.back().second = std::max(merged.back().second, r.second);
+                else
+                    merged.push_back(r);
+            }
+            // Latest first, so earlier shifts don't move later gaps.
+            for (auto it = merged.rbegin(); it != merged.rend(); ++it)
+                shiftClipsAfter(*track, tracktion::TimePosition::fromSeconds(it->second),
+                                tracktion::TimeDuration::fromSeconds(it->first - it->second));
+        }
+    }
+    edit_->restartPlayback();
+    markDirtyAndNotify();
+}
+
+void EditManager::ensureAutoCrossfade(te::Clip* clip)
+{
+    if (auto* ac = dynamic_cast<te::AudioClipBase*>(clip))
+        if (!ac->state.hasProperty(te::IDs::autoCrossfade))
+            ac->state.setProperty(te::IDs::autoCrossfade, true, nullptr);
+}
+
+bool EditManager::useWholeTake(te::AudioTrack& track, int takeId)
+{
+    for (const auto& take : getTakes(&track))
+        if (take.id == takeId)
+            return compTake(track, takeId, take.start, take.start + take.length);
+    return false;
+}
+
+void EditManager::deleteTake(te::AudioTrack& track, int takeId)
+{
+    if (!edit_) return;
+    auto tree = track.state.getChildWithName(kTakesTree);
+    for (int i = tree.getNumChildren(); --i >= 0;)
+        if (int(tree.getChild(i)[kTakeIdProp]) == takeId)
+            tree.removeChild(i, &edit_->getUndoManager());
+    emit takesChanged(&track, 0);
+    markDirtyAndNotify();
+}
+
+void EditManager::deleteUnusedTakes(te::AudioTrack& track)
+{
+    if (!edit_) return;
+    auto tree = track.state.getChildWithName(kTakesTree);
+    for (int i = tree.getNumChildren(); --i >= 0;)
+        if (takeUsedRanges(&track, int(tree.getChild(i)[kTakeIdProp])).empty())
+            tree.removeChild(i, &edit_->getUndoManager());
+    emit takesChanged(&track, 0);
+    markDirtyAndNotify();
 }
 
 // ── Output routing ───────────────────────────────────────────────────────────
@@ -1436,7 +1972,8 @@ bool EditManager::isInternalPlugin(te::Plugin* plugin)
     return dynamic_cast<te::VolumeAndPanPlugin*>(plugin)
         || dynamic_cast<te::LevelMeterPlugin*>(plugin)
         || dynamic_cast<te::AuxSendPlugin*>(plugin)
-        || dynamic_cast<te::AuxReturnPlugin*>(plugin);
+        || dynamic_cast<te::AuxReturnPlugin*>(plugin)
+        || dynamic_cast<LooperPlugin*>(plugin);
 }
 
 int EditManager::effectInsertIndex(te::PluginList& list)
@@ -2236,15 +2773,20 @@ bool EditManager::exportMix(const ExportSettings& settings,
     auto tracks = te::getAudioTracks(*edit_);
     if (tracks.isEmpty()) { renderInProgress_ = false; return false; }
 
+    // Tracks that are disconnected or play out of another output aren't part
+    // of the mix (the render would otherwise sum every top-level track).
     juce::BigInteger tracksToDo;
     for (auto* track : tracks) {
         int idx = track->getIndexInEditTrackList();
-        if (idx >= 0)
+        if (idx >= 0 && feedsMainMix(track))
             tracksToDo.setBit(idx);
     }
+    // An empty set would mean "every track" to the renderer.
+    if (tracksToDo.isZero()) { renderInProgress_ = false; return false; }
 
     auto editLength = edit_->getLength();
     if (editLength.inSeconds() <= 0.0) { renderInProgress_ = false; return false; }
+    const bool hasRange = settings.range.getLength().inSeconds() > 0.0;
 
     te::Renderer::Parameters params(*edit_);
     params.destFile = settings.destFile;
@@ -2252,10 +2794,16 @@ bool EditManager::exportMix(const ExportSettings& settings,
     params.bitDepth = settings.bitDepth;
     params.shouldNormalise = settings.normalize;
     params.tracksToDo = tracksToDo;
-    params.time = { tracktion::TimePosition(), tracktion::TimePosition::fromSeconds(editLength.inSeconds()) };
+    params.time = hasRange ? settings.range
+                           : tracktion::TimeRange(tracktion::TimePosition(),
+                                                  tracktion::TimePosition::fromSeconds(editLength.inSeconds()));
     params.usePlugins = true;
-    params.useMasterPlugins = true;
+    params.useMasterPlugins = settings.useMasterPlugins;
     params.canRenderInMono = false;
+    params.ditheringEnabled = settings.dither && settings.bitDepth == 16
+                           && (settings.format == ExportFormat::WAV || settings.format == ExportFormat::FLAC);
+    // A stem can be silent over the range; that is still a valid file.
+    params.checkNodesForAudio = settings.stems == StemMode::None;
 
     bool isMp3 = (settings.format == ExportFormat::MP3);
     juce::File renderDest = isMp3
@@ -2298,6 +2846,11 @@ bool EditManager::exportMix(const ExportSettings& settings,
         return false;
     }
 
+    // Measure the mix as written (before MP3 encoding changes it slightly).
+    lastExportLoudness_ = {};
+    if (settings.stems == StemMode::None)
+        lastExportLoudness_ = LoudnessMeter::analyzeFile(renderDest);
+
     if (isMp3) {
         QString wavPath = QString::fromStdString(renderDest.getFullPathName().toStdString());
         QString mp3Path = QString::fromStdString(settings.destFile.getFullPathName().toStdString());
@@ -2320,6 +2873,94 @@ bool EditManager::exportMix(const ExportSettings& settings,
 
     renderInProgress_ = false;
     return settings.destFile.existsAsFile();
+}
+
+bool EditManager::feedsMainMix(te::AudioTrack* track) const
+{
+    return track && !isTrackOutputDisconnected(track)
+        && getTrackDirectOutputID(track).isEmpty();
+}
+
+QString EditManager::projectName() const
+{
+    if (currentFile_ != juce::File())
+        return QString::fromStdString(currentFile_.getFileNameWithoutExtension().toStdString());
+    return "Untitled";
+}
+
+std::vector<EditManager::Stem> EditManager::planStems(StemMode mode) const
+{
+    std::vector<Stem> stems;
+    if (!edit_ || mode == StemMode::None) return stems;
+
+    // A source is a track (not a bus) that is heard: not muted, and on a path
+    // that reaches the mix.
+    auto reachesMix = [this](te::AudioTrack* t) {
+        for (int guard = 0; t && guard < 64; ++guard) {
+            if (isTrackOutputDisconnected(t) || !getTrackDirectOutputID(t).isEmpty())
+                return false;
+            auto* dest = getTrackOutputDestination(t);
+            if (!dest) return true;
+            t = dest;
+        }
+        return false;
+    };
+    auto nameOf = [](te::AudioTrack* t) {
+        return QString::fromStdString(t->getName().toStdString());
+    };
+
+    std::map<te::AudioTrack*, size_t> stemForBus;
+    for (auto* t : getNonBusAudioTracks()) {
+        if (t->isMuted(false) || !reachesMix(t))
+            continue;
+        auto* bus = getTrackOutputDestination(t);
+        if (mode == StemMode::Groups && bus && isBusTrack(bus)) {
+            auto it = stemForBus.find(bus);
+            if (it == stemForBus.end()) {
+                it = stemForBus.emplace(bus, stems.size()).first;
+                stems.push_back({ nameOf(bus), {} });
+            }
+            stems[it->second].sources.push_back(t->itemID);
+        } else {
+            stems.push_back({ nameOf(t), { t->itemID } });
+        }
+    }
+
+    // Names become file names, so they must be unique.
+    std::map<QString, int> seen;
+    for (auto& s : stems)
+        if (const int n = ++seen[s.name.toLower()]; n > 1)
+            s.name += QString(" %1").arg(n);
+    return stems;
+}
+
+void EditManager::applyStemMutes(const Stem& stem)
+{
+    if (!edit_) return;
+    if (savedMuteSolo_.empty())
+        for (auto* t : getAudioTracks())
+            savedMuteSolo_.push_back({ t->itemID, t->isMuted(false), t->isSolo(false) });
+
+    // Mute and solo don't go through the undo manager, so this leaves no
+    // history behind.
+    for (auto* t : getAudioTracks()) {
+        t->setSolo(false);
+        if (isBusTrack(t)) continue;
+        const bool source = std::find(stem.sources.begin(), stem.sources.end(), t->itemID)
+                         != stem.sources.end();
+        t->setMute(!source);
+    }
+}
+
+void EditManager::restoreStemMutes()
+{
+    for (const auto& s : savedMuteSolo_) {
+        if (auto* t = findAudioTrack(s.id)) {
+            t->setMute(s.muted);
+            t->setSolo(s.soloed);
+        }
+    }
+    savedMuteSolo_.clear();
 }
 
 bool EditManager::isTrackFrozen(te::AudioTrack* track) const

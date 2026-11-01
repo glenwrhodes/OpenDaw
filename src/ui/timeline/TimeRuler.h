@@ -22,6 +22,9 @@ public:
     void setLoopRegion(double inBeat, double outBeat);
     void setLoopEnabled(bool enabled);
     bool loopEnabled() const { return loopEnabled_; }
+    // Punch shares the loop range; while on, the range shows in the record colour.
+    void setPunchEnabled(bool enabled);
+    bool regionVisible() const;
     double loopInBeat() const { return loopInBeat_; }
     double loopOutBeat() const { return loopOutBeat_; }
 
@@ -57,6 +60,7 @@ private:
     double loopInBeat_  = 0.0;
     double loopOutBeat_ = 0.0;
     bool   loopEnabled_ = false;
+    bool   punchEnabled_ = false;
     bool   draggingLoopIn_  = false;
     bool   draggingLoopOut_ = false;
 

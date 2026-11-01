@@ -7,6 +7,8 @@ namespace te = tracktion::engine;
 
 namespace OpenDaw {
 
+class LoudnessTap;
+
 class AudioEngine {
 public:
     AudioEngine();
@@ -26,8 +28,17 @@ public:
     juce::StringArray getAvailableMidiOutputDevices() const;
     void enableAllMidiInputDevices();
 
+    // Input monitoring ("audio/monitorMode": 0 off, 1 while armed, 2 always)
+    // and the recording offset ("audio/recordOffsetMs") from the app settings,
+    // applied to every audio input.
+    void applyInputSettings();
+
+    // Loudness of what the audio device plays, installed with the device.
+    LoudnessTap* loudnessTap() const { return loudnessTap_; }
+
 private:
     std::unique_ptr<te::Engine> engine_;
+    LoudnessTap* loudnessTap_ = nullptr;   // owned by the device manager
 };
 
 } // namespace OpenDaw

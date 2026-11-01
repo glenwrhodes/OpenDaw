@@ -17,6 +17,7 @@
 #include <QToolBar>
 #include <QStatusBar>
 #include <QAction>
+#include <QActionGroup>
 #include <QCloseEvent>
 #include <QLabel>
 #include <QTimer>
@@ -27,6 +28,7 @@ class PianoRollEditor;
 class AudioClipEditor;
 class SheetMusicView;
 class VideoPlayerWidget;
+class LooperWindow;
 
 class ShortcutFilter : public QObject {
     Q_OBJECT
@@ -122,6 +124,11 @@ private:
     QToolBar* transportToolBar_       = nullptr;
     QToolBar* mainToolBar_            = nullptr;
     QAction* splitClipAction_         = nullptr;
+    QActionGroup* editToolGroup_      = nullptr;
+    QAction* rippleAction_            = nullptr;
+    QAction* looperAction_            = nullptr;
+    LooperWindow* looperWindow_       = nullptr;
+    void showLooper(bool show);
 
     QLabel* sampleRateLabel_          = nullptr;
     QLabel* bufferLabel_              = nullptr;

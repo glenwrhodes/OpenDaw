@@ -1,6 +1,7 @@
 #pragma once
 
 #include "AudioEngine.h"
+#include "LoudnessMeter.h"
 #include <atomic>
 #include <tracktion_engine/tracktion_engine.h>
 #include <QObject>
@@ -17,6 +18,8 @@
 
 namespace OpenDaw {
 
+class LooperEngine;
+
 struct InputSource {
     juce::String deviceName;
     QString displayName;
@@ -24,14 +27,23 @@ struct InputSource {
 
 enum class ExportFormat { WAV, FLAC, OGG, MP3 };
 
+// Stems: one file per track, or per group (each bus with the tracks routed
+// into it; tracks going straight to Master get their own file).
+enum class StemMode { None, Tracks, Groups };
+
 struct ExportSettings {
-    juce::File destFile;
+    juce::File destFile;            // the file, or the folder for stems
     double sampleRate = 44100.0;
     int bitDepth = 24;
     bool normalize = false;
     ExportFormat format = ExportFormat::WAV;
     int oggQuality = 5;
     int mp3Bitrate = 320;
+    tracktion::TimeRange range;     // empty: the whole song
+    bool dither = true;             // adds noise-shaped dither to 16-bit WAV/FLAC
+    bool useMasterPlugins = true;
+    StemMode stems = StemMode::None;
+    QString stemPattern = "{project} - {name}";
 };
 
 class EditManager : public QObject {
@@ -47,6 +59,11 @@ public:
     bool saveEditAs(const juce::File& file);
 
     te::Edit*      edit()      { return edit_.get(); }
+    LooperEngine&  looper()    { return *looper_; }
+    // For changes made outside EditManager (the looper's prints): marks the
+    // project changed and refreshes the views.
+    void notifyEdited() { markDirtyAndNotify(); }
+    AudioEngine&   audioEngine() { return audioEngine_; }
     te::TransportControl& transport();
 
     te::AudioTrack* addAudioTrack();
@@ -106,6 +123,62 @@ public:
     QString getTrackInputName(te::AudioTrack* track) const;
     void setTrackRecordEnabled(te::AudioTrack& track, bool enabled);
     bool isTrackRecordEnabled(te::AudioTrack* track) const;
+
+    // Recording. Every entry point (button, R key, AI) goes through these so
+    // punch, pre-roll and post-roll behave the same.
+    void startRecording();
+    void toggleRecording();
+    // Punch: recording only happens between the loop/punch markers. Punch and
+    // loop share the ruler range and are exclusive (Tracktion records in one
+    // mode or the other).
+    bool isPunchEnabled() const;
+    void setPunchEnabled(bool enabled);
+    // Bars played before the punch-in, and after the punch-out before stopping.
+    int  preRollBars() const;
+    void setPreRollBars(int bars);
+    int  postRollBars() const;
+    void setPostRollBars(int bars);
+    // Gives the loop/punch range a default of 4 bars from the playhead's bar
+    // when it is empty.
+    void ensureLoopRange();
+
+    // Takes: every audio recording pass on a track is kept as a take. The
+    // track's clips are the comp; a take lane shows each take, and comping
+    // copies part of a take onto the track. Times are edit seconds.
+    struct TakeInfo {
+        int id = 0;
+        QString name;
+        juce::File file;
+        double start = 0.0;    // where the take sits on the timeline
+        double offset = 0.0;   // where in the file it starts
+        double length = 0.0;
+    };
+    std::vector<TakeInfo> getTakes(te::AudioTrack* track) const;
+    // Copies [startSec, endSec] of a take onto the track, replacing what was
+    // there. One undo step.
+    bool compTake(te::AudioTrack& track, int takeId, double startSec, double endSec);
+    bool useWholeTake(te::AudioTrack& track, int takeId);
+    void deleteTake(te::AudioTrack& track, int takeId);
+    void deleteUnusedTakes(te::AudioTrack& track);
+    // The take a clip was comped from, or 0.
+    static int clipTakeId(const te::Clip* clip);
+    // Timeline ranges (seconds) of the track's clips that come from a take.
+    std::vector<std::pair<double, double>> takeUsedRanges(te::AudioTrack* track, int takeId) const;
+    te::AudioTrack* findAudioTrack(te::EditItemID id) const;
+
+    // Editing across tracks. Each call is one undo step. With ripple, clips
+    // after the removed audio move left to close the gap on their track.
+    void deleteTimeRange(const juce::Array<te::AudioTrack*>& tracks,
+                         tracktion::TimeRange range, bool ripple);
+    void splitTracksAt(const juce::Array<te::AudioTrack*>& tracks,
+                       tracktion::TimePosition time);
+    void deleteClips(const std::vector<te::Clip*>& clips, bool ripple);
+    // Moves every clip on the track that starts at or after `from`.
+    void shiftClipsAfter(te::AudioTrack& track, tracktion::TimePosition from,
+                         tracktion::TimeDuration delta);
+    // Audio clips crossfade with the clips they overlap, unless switched off
+    // on that clip.
+    static void ensureAutoCrossfade(te::Clip* clip);
 
     // Output routing
     bool wouldCreateCycle(te::AudioTrack* src, te::AudioTrack* dest) const;
@@ -274,6 +347,22 @@ public:
     bool& loopActivationDeferred() { return loopActivationDeferred_; }
     bool exportMix(const ExportSettings& settings,
                    std::function<void(float)> progressCallback);
+    // Loudness of the last mix exportMix() wrote (not set by stem exports).
+    LoudnessMeter::FileResult lastExportLoudness() const { return lastExportLoudness_; }
+
+    // Stems. Each stem is its sources' share of the mix: everything else is
+    // muted while it renders, and buses stay on, so a stem keeps the bus
+    // processing and effect returns its sources go through, and the stems add
+    // up to the mix. Message thread only; the mutes leave no undo history.
+    struct Stem {
+        QString name;
+        std::vector<te::EditItemID> sources;
+    };
+    std::vector<Stem> planStems(StemMode mode) const;
+    void applyStemMutes(const Stem& stem);
+    void restoreStemMutes();
+    QString projectName() const;
+    static juce::String sanitizeForFilename(const juce::String& name);
     bool isTrackFrozen(te::AudioTrack* track) const;
     void freezeTrack(te::AudioTrack& track);
     void unfreezeTrack(te::AudioTrack& track);
@@ -294,8 +383,26 @@ signals:
     void audioClipDoubleClicked(te::WaveAudioClip* clip);
     void audioClipSelected(te::WaveAudioClip* clip);
     void audioClipModified(te::WaveAudioClip* clip);
+    void punchChanged(bool enabled);
+    // A track's takes were added, removed or comped. newTakes > 0 when a
+    // recording just added that many.
+    void takesChanged(te::AudioTrack* track, int newTakes);
 
 private:
+    struct RecordingListener : te::TransportControl::Listener {
+        explicit RecordingListener(EditManager& o) : owner(o) {}
+        void recordingFinished(te::InputDeviceInstance&, te::EditItemID targetID,
+                               const juce::ReferenceCountedArray<te::Clip>& clips) override;
+        EditManager& owner;
+    };
+    void attachRecordingListener();
+    void processRecordedClips(te::EditItemID trackId, const std::vector<te::EditItemID>& clipIds);
+    int  registerRecordedClip(te::AudioTrack& track, te::WaveAudioClip& clip,
+                              const std::vector<te::EditItemID>& justRecorded);
+    int  addTakeEntry(te::AudioTrack& track, const juce::File& file, double start,
+                      double offset, double length, const QString& name = {});
+    void checkPostRoll();
+
     void teardownCurrentEdit();
     void createDefaultEdit();
     void ensureLevelMetersOnAllTracks();
@@ -315,11 +422,14 @@ private:
     int auxBusNumberFor(te::AudioTrack& bus);
     te::AudioTrack* busForAuxNumber(int busNumber) const;
     te::AuxSendPlugin* findSend(te::AudioTrack& src, te::AudioTrack& bus) const;
-    static juce::String sanitizeForFilename(const juce::String& name);
+    // In the mix: not disconnected and not sent straight to another output.
+    bool feedsMainMix(te::AudioTrack* track) const;
     void performAutosave();
     QString autosaveFileId() const;
 
     AudioEngine& audioEngine_;
+    // Declared before edit_ so it outlives the edit's looper plugins.
+    std::unique_ptr<LooperEngine> looper_;
     std::unique_ptr<te::Edit> edit_;
     juce::File currentFile_;
     std::unordered_set<uint64_t> midiTrackIds_;
@@ -329,12 +439,17 @@ private:
     bool hasUnsavedChanges_ = false;
     bool engineSuspended_ = false;
     QTimer autosaveTimer_;
+    QTimer recordWatchTimer_;   // post-roll stop while punch recording
+    std::unique_ptr<RecordingListener> recordingListener_;
     struct FreezeState {
         juce::File freezeFile;
         std::vector<te::EditItemID> mutedClipIds;
         std::vector<te::EditItemID> disabledPluginIds;
     };
     std::map<uint64_t, FreezeState> frozenTracks_;
+    LoudnessMeter::FileResult lastExportLoudness_;
+    struct SavedMuteSolo { te::EditItemID id; bool muted; bool soloed; };
+    std::vector<SavedMuteSolo> savedMuteSolo_;
 };
 
 } // namespace OpenDaw
