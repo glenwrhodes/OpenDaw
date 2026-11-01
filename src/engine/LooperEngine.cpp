@@ -116,7 +116,7 @@ void LooperEngine::attach()
 
             const juce::File file(child.getProperty(kFileProp).toString());
             std::unique_ptr<juce::AudioFormatReader> reader(fm.createReaderFor(file));
-            const int64_t length = int64_t(child.getProperty(kLengthProp, 0));
+            const int64_t length = juce::int64(child.getProperty(kLengthProp, 0));
             if (!reader || length <= 0) continue;
             const int n = int(std::min<int64_t>(length, reader->lengthInSamples));
             auto buf = std::make_shared<juce::AudioBuffer<float>>(2, std::max(1, n));
