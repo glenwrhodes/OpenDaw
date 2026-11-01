@@ -282,7 +282,7 @@ void LooperPadProcessor::capture(double t0, double t1, double sr, int64_t hubAt0
             recEnd_ = recStart_ + double(recCapacity_) / sr;
         }
         if (recEnd_ < kOpenEnd) {
-            const int64_t total = std::min(recCapacity_, std::llround((recEnd_ - recStart_) * sr));
+            const int64_t total = std::min<int64_t>(recCapacity_, std::llround((recEnd_ - recStart_) * sr));
             if (recCaptured_ >= total && state_ != PadState::Recording) {
                 recCapturing_ = false;
                 pushEvent(LooperEvent::RecordDone, recEnd_, length_);
@@ -402,7 +402,7 @@ void LooperPadProcessor::process(const te::PluginRenderContext& fc)
 
         if (state_ == PadState::Recording && t >= recEnd_) {
             // The recording becomes the loop and plays on, in phase.
-            length_ = std::max<int64_t>(1, std::min(recCapacity_, std::llround((recEnd_ - recStart_) * sr)));
+            length_ = std::max<int64_t>(1, std::min<int64_t>(recCapacity_, std::llround((recEnd_ - recStart_) * sr)));
             loop_ = recBuffer_;
             anchor_ = recStart_;
             oneShot_ = false;
