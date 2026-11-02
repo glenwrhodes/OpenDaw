@@ -388,6 +388,8 @@ TimelineView::TimelineView(EditManager* editMgr, QWidget* parent)
     headerContainer_->setPalette(hcPal);
     headerVLayout_ = new QVBoxLayout(headerContainer_);
     headerVLayout_->setContentsMargins(0, 0, 0, 0);
+    // A 1px gap between headers: each header is 1px shorter than its row in
+    // the timeline so the two columns stay lined up.
     headerVLayout_->setSpacing(1);
     headerVLayout_->setAlignment(Qt::AlignTop);
 
@@ -447,6 +449,12 @@ TimelineView::TimelineView(EditManager* editMgr, QWidget* parent)
 
     // Sync track header vertical scroll with timeline vertical scroll
     connect(graphicsView_->verticalScrollBar(), &QScrollBar::valueChanged,
+            this, &TimelineView::syncHeaderScroll);
+    // Either range changing (scene height, window size, the horizontal
+    // scrollbar showing) can leave the headers short of the timeline.
+    connect(graphicsView_->verticalScrollBar(), &QScrollBar::rangeChanged,
+            this, &TimelineView::syncHeaderScroll);
+    connect(headerScrollArea_->verticalScrollBar(), &QScrollBar::rangeChanged,
             this, &TimelineView::syncHeaderScroll);
 
     // Ruler click -> snap to grid, then set transport position
@@ -1093,7 +1101,7 @@ void TimelineView::rebuildTrackHeaders()
                     });
             connect(laneHeader, &AutomationLaneHeader::closeRequested,
                     this, [this, track]() { toggleAutomation(track, false); });
-            laneHeader->setLaneHeight(int(layout_[trackLayoutIdx].automationLaneHeight));
+            laneHeader->setLaneHeight(int(layout_[trackLayoutIdx].automationLaneHeight) - 1);
             laneHeader->selectParam(layout_[trackLayoutIdx].shownParam);
 
             headerVLayout_->addWidget(laneHeader);
@@ -1106,7 +1114,7 @@ void TimelineView::rebuildTrackHeaders()
     int minNeeded = 0;
     for (int i = 0; i < static_cast<int>(trackHeaders_.size()); ++i) {
         if (i < static_cast<int>(layout_.size()) && layout_[i].collapsed) continue;
-        minNeeded = std::max(minNeeded, trackHeaders_[i]->minimumSizeHint().height());
+        minNeeded = std::max(minNeeded, trackHeaders_[i]->minimumSizeHint().height() + 1);
     }
 
     if (trackHeight_ < minNeeded) {
@@ -1117,8 +1125,8 @@ void TimelineView::rebuildTrackHeaders()
     bool needsRebuild = false;
     for (int i = 0; i < static_cast<int>(trackHeaders_.size()); ++i) {
         double h = (i < static_cast<int>(layout_.size())) ? layout_[i].clipRowHeight : trackHeight_;
-        trackHeaders_[i]->setTrackHeight(static_cast<int>(h));
-        int actualH = trackHeaders_[i]->height();
+        trackHeaders_[i]->setTrackHeight(static_cast<int>(h) - 1);
+        int actualH = trackHeaders_[i]->height() + 1;
         if (i < static_cast<int>(layout_.size()) && actualH > layout_[i].clipRowHeight) {
             layout_[i].clipRowHeight = actualH;
             needsRebuild = true;
@@ -1138,6 +1146,13 @@ void TimelineView::rebuildTrackHeaders()
 
 void TimelineView::syncHeaderScroll()
 {
+    // The headers must scroll as far as the timeline does: as tall as its
+    // scene, plus the height of its horizontal scrollbar (they have none).
+    const int extra = headerScrollArea_->viewport()->height() - graphicsView_->viewport()->height();
+    const int needed = int(std::ceil(scene_->sceneRect().height())) + std::max(0, extra);
+    if (headerContainer_->minimumHeight() != needed)
+        headerContainer_->setMinimumHeight(needed);
+
     int vScrollVal = graphicsView_->verticalScrollBar()->value();
     headerScrollArea_->verticalScrollBar()->setValue(vScrollVal);
 }

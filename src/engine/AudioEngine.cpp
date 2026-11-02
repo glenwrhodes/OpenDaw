@@ -1,6 +1,7 @@
 ﻿#include "AudioEngine.h"
 #include "LoudnessMeter.h"
 #include "LooperPlugin.h"
+#include "instruments/SoundFontInstrument.h"
 #include <QSettings>
 
 namespace OpenDaw {
@@ -9,6 +10,7 @@ AudioEngine::AudioEngine()
 {
     engine_ = std::make_unique<te::Engine>("OpenDaw");
     engine_->getPluginManager().createBuiltInType<LooperPlugin>();
+    engine_->getPluginManager().createBuiltInType<SoundFontPlugin>();
 }
 
 AudioEngine::~AudioEngine() = default;

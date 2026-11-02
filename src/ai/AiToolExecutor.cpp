@@ -1,4 +1,6 @@
 #include "AiToolExecutor.h"
+#include "engine/instruments/BundledPlugins.h"
+#include "engine/instruments/SoundFontInstrument.h"
 #include <tracktion_engine/tracktion_engine.h>
 #include <QCoreApplication>
 #include <QtConcurrent/QtConcurrent>
@@ -187,6 +189,11 @@ static QJsonObject trackToJson(EditManager* mgr, te::AudioTrack* t, int index)
 
     obj["input"] = mgr->getTrackInputName(t);
     obj["output"] = mgr->getTrackOutputName(t);
+    if (mgr->isMidiTrack(t)) {
+        auto* instrument = mgr->getTrackInstrument(t);
+        obj["instrument"] = instrument ? QString::fromStdString(instrument->getName().toStdString())
+                                       : QString("none");
+    }
 
     return obj;
 }
@@ -353,6 +360,65 @@ void AiToolExecutor::registerHandlers()
         emitTracksChanged();
         return ok(id, QString("Created MIDI track '%1'.")
                       .arg(QString::fromStdString(track->getName().toStdString())));
+    };
+
+    handlers_["list_instruments"] = [this](const QJsonObject&, const QString& id) -> AiToolResult {
+        QJsonObject result;
+        QJsonObject builtIn;
+        for (const auto& preset : SoundFontLibrary::instance().presets()) {
+            QJsonArray names = builtIn[preset.category].toArray();
+            names.append(preset.name);
+            builtIn[preset.category] = names;
+        }
+        result["built_in"] = builtIn;
+        if (BundledPlugins::hasSurgeXt())
+            result["synth"] = "Surge XT (bundled; set_track_instrument with \"Surge XT\". "
+                              "Its presets are chosen by the user in its window.)";
+        QJsonArray vsts;
+        if (pluginScanner_)
+            for (auto& desc : pluginScanner_->getPluginList().getTypes())
+                if (desc.isInstrument)
+                    vsts.append(QString::fromStdString(desc.name.toStdString()));
+        result["vst"] = vsts;
+        return ok(id, result);
+    };
+
+    handlers_["set_track_instrument"] = [this](const QJsonObject& input, const QString& id) -> AiToolResult {
+        auto* track = resolveTrack(input["track"]);
+        if (!track) return err(id, "Track not found.");
+        const QString want = input["instrument"].toString().trimmed();
+        const QString trackName = QString::fromStdString(track->getName().toStdString());
+
+        if (auto* preset = SoundFontLibrary::instance().findByName(want)) {
+            editMgr_->setTrackBuiltInInstrument(*track, preset->bank, preset->program);
+            if (input.contains("follow_program_changes"))
+                if (auto* sf = dynamic_cast<SoundFontPlugin*>(editMgr_->getTrackInstrument(track)))
+                    sf->setFollowsProgramChanges(input["follow_program_changes"].toBool());
+            emitTracksChanged();
+            return ok(id, QString("'%1' now plays the built-in %2 (%3).")
+                          .arg(trackName, preset->name, preset->category));
+        }
+        if (pluginScanner_ && want.contains("surge", Qt::CaseInsensitive)) {
+            if (auto desc = BundledPlugins::surgeXtDescription(pluginScanner_->getPluginList())) {
+                pluginScanner_->saveCachedList();
+                editMgr_->setTrackInstrument(*track, *desc);
+                emitTracksChanged();
+                return ok(id, QString("'%1' now plays the Surge XT synth (its Init patch; "
+                                      "presets are chosen in its window).").arg(trackName));
+            }
+        }
+        if (pluginScanner_) {
+            for (auto& desc : pluginScanner_->getPluginList().getTypes()) {
+                if (!desc.isInstrument) continue;
+                const QString name = QString::fromStdString(desc.name.toStdString());
+                if (name.contains(want, Qt::CaseInsensitive)) {
+                    editMgr_->setTrackInstrument(*track, desc);
+                    emitTracksChanged();
+                    return ok(id, QString("'%1' now plays the VST instrument %2.").arg(trackName, name));
+                }
+            }
+        }
+        return err(id, QString("No instrument matches '%1'. Call list_instruments for the names.").arg(want));
     };
 
     handlers_["create_bus_track"] = [this](const QJsonObject& input, const QString& id) -> AiToolResult {

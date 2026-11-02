@@ -21,7 +21,7 @@ FolderHeaderWidget::FolderHeaderWidget(int folderId, EditManager* editMgr,
     collapsed_ = editMgr_->isFolderCollapsed(folderId_);
 
     setFixedWidth(metrics::kTrackHeaderWidth);
-    setFixedHeight(28);
+    setFixedHeight(27);   // its row is 28 (FolderDividerInfo::kHeight), less the 1px gap
     setAutoFillBackground(true);
     QPalette pal;
     QColor folderBg = theme.surface.lighter(115);

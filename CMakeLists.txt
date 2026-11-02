@@ -75,6 +75,8 @@ set(OpenDaw_SOURCES
     src/engine/LoudnessMeter.h      src/engine/LoudnessMeter.cpp
     src/engine/LooperPlugin.h       src/engine/LooperPlugin.cpp
     src/engine/LooperEngine.h       src/engine/LooperEngine.cpp
+    src/engine/instruments/SoundFontInstrument.h src/engine/instruments/SoundFontInstrument.cpp
+    src/engine/instruments/BundledPlugins.h src/engine/instruments/BundledPlugins.cpp
     src/engine/EditManager.h        src/engine/EditManager.cpp
     src/engine/PluginScanner.h      src/engine/PluginScanner.cpp
     src/ui/MainWindow.h             src/ui/MainWindow.cpp
@@ -110,6 +112,7 @@ set(OpenDaw_SOURCES
     src/ui/effects/DelayEffectWidget.h   src/ui/effects/DelayEffectWidget.cpp
     src/ui/effects/EffectSelectorDialog.h src/ui/effects/EffectSelectorDialog.cpp
     src/ui/effects/VstSelectorDialog.h    src/ui/effects/VstSelectorDialog.cpp
+    src/ui/effects/InstrumentMenu.h       src/ui/effects/InstrumentMenu.cpp
     src/ui/effects/PluginEditorWindow.h   src/ui/effects/PluginEditorWindow.cpp
     src/ui/audioclip/WaveformSelection.h
     src/ui/audioclip/AudioFileUndoManager.h  src/ui/audioclip/AudioFileUndoManager.cpp
@@ -182,7 +185,139 @@ qt_add_resources(OpenDaw "OpenDaw_resources" PREFIX "/" BASE resources FILES
     resources/MaterialSymbolsOutlined.ttf
     resources/mixerStripBG.png
     resources/Bravura.otf)
-target_include_directories(OpenDaw PRIVATE src ${CMAKE_SOURCE_DIR}/libs/vst2sdk ${FFMPEG_INCLUDE_DIRS})
+target_include_directories(OpenDaw PRIVATE src ${CMAKE_SOURCE_DIR}/libs/vst2sdk
+    ${CMAKE_SOURCE_DIR}/libs/tinysoundfont ${FFMPEG_INCLUDE_DIRS})
+
+# ── Built-in instrument sounds ───────────────────────────────────────────────
+# GeneralUser GS v2.0.3 by S. Christian Collins, a free General MIDI SoundFont
+# (see its LICENSE, shipped beside it). Downloaded at configure time rather
+# than kept in git, and copied next to the program after each build.
+set(OPENDAW_SOUNDFONT_DIR "${CMAKE_BINARY_DIR}/soundfonts")
+set(OPENDAW_SOUNDFONT_URL
+    "https://raw.githubusercontent.com/mrbumpy409/GeneralUser-GS/684543d5e5efaef08d02be50dcda8d552478fa60")
+file(DOWNLOAD "${OPENDAW_SOUNDFONT_URL}/GeneralUser-GS.sf2"
+     "${OPENDAW_SOUNDFONT_DIR}/GeneralUser-GS.sf2"
+     EXPECTED_HASH SHA256=9575028c7a1f589f5770fccc8cff2734566af40cd26ed836944e9a5152688cfe)
+file(DOWNLOAD "${OPENDAW_SOUNDFONT_URL}/documentation/LICENSE.txt"
+     "${OPENDAW_SOUNDFONT_DIR}/GeneralUser-GS-LICENSE.txt"
+     EXPECTED_HASH SHA256=7b32efefdf95ce38a043799f0659853ddc00fbaa14d8c50f0aca16b9b8b405be)
+if(APPLE)
+    set(OPENDAW_SOUNDFONT_DEST "$<TARGET_BUNDLE_CONTENT_DIR:OpenDaw>/Resources/soundfonts")
+else()
+    set(OPENDAW_SOUNDFONT_DEST "$<TARGET_FILE_DIR:OpenDaw>/soundfonts")
+endif()
+add_custom_command(TARGET OpenDaw POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E make_directory "${OPENDAW_SOUNDFONT_DEST}"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "${OPENDAW_SOUNDFONT_DIR}/GeneralUser-GS.sf2"
+            "${OPENDAW_SOUNDFONT_DIR}/GeneralUser-GS-LICENSE.txt"
+            "${OPENDAW_SOUNDFONT_DEST}"
+    COMMENT "Copying the built-in instrument sounds")
+
+# ── Bundled synth: Surge XT ──────────────────────────────────────────────────
+# Surge XT 1.3.4 by the Surge Synth Team (GPL-3.0, source at
+# https://github.com/surge-synthesizer/surge/tree/release_xt_1.3.4): the
+# official VST3 plus its factory content (patches, wavetables, skins), fetched
+# at configure time and copied beside the program after each build. Optional:
+# if a download fails the build carries on without it.
+option(OPENDAW_BUNDLE_SURGE_XT "Ship the Surge XT synth with OpenDaw" ON)
+if(OPENDAW_BUNDLE_SURGE_XT)
+    set(SURGE_XT_VERSION "1.3.4")
+    set(SURGE_XT_URL "https://github.com/surge-synthesizer/releases-xt/releases/download/${SURGE_XT_VERSION}")
+    set(SURGE_XT_DIR "${CMAKE_BINARY_DIR}/surge-xt")
+    if(WIN32)
+        set(SURGE_XT_PLUGINS "surge-xt-win64-${SURGE_XT_VERSION}-pluginsonly.zip")
+        set(SURGE_XT_PLUGINS_SHA256 564e162c560af07ad4ed47fe1bfcd827cf97a575de30d06c48249aad2e7c35e6)
+        set(SURGE_XT_VST3_PATTERN "Surge XT.vst3")
+    elseif(APPLE)
+        set(SURGE_XT_PLUGINS "surge-xt-macos-${SURGE_XT_VERSION}-pluginsonly.zip")
+        set(SURGE_XT_PLUGINS_SHA256 37d8d809693adc86587b7bc75a2384fc4e905f259aa9b9a21777749d36fbf8aa)
+        set(SURGE_XT_VST3_PATTERN "Surge XT.vst3")
+    else()
+        set(SURGE_XT_PLUGINS "surge-xt-linux-${SURGE_XT_VERSION}-pluginsonly.tar.gz")
+        set(SURGE_XT_PLUGINS_SHA256 dd431b75f5fa197c4bffa6ca27ca46970f0a94c834119bb1db7decdeec4c28db)
+        set(SURGE_XT_VST3_PATTERN "./Surge XT.vst3")
+    endif()
+
+    # Downloads `url` to `file` unless it's already there; checks its SHA256.
+    function(opendaw_fetch url file sha256 ok)
+        if(EXISTS "${file}")
+            file(SHA256 "${file}" have)
+            if(have STREQUAL sha256)
+                set(${ok} TRUE PARENT_SCOPE)
+                return()
+            endif()
+        endif()
+        message(STATUS "Downloading ${url}")
+        file(DOWNLOAD "${url}" "${file}" STATUS status)
+        list(GET status 0 code)
+        if(code EQUAL 0)
+            file(SHA256 "${file}" have)
+        endif()
+        if(code EQUAL 0 AND have STREQUAL sha256)
+            set(${ok} TRUE PARENT_SCOPE)
+        else()
+            file(REMOVE "${file}")
+            message(WARNING "Couldn't download ${url} (${status}); building without Surge XT")
+            set(${ok} FALSE PARENT_SCOPE)
+        endif()
+    endfunction()
+
+    set(SURGE_XT_STAGE "${SURGE_XT_DIR}/stage-${SURGE_XT_VERSION}")
+    if(NOT EXISTS "${SURGE_XT_STAGE}/.complete")
+        opendaw_fetch("${SURGE_XT_URL}/${SURGE_XT_PLUGINS}" "${SURGE_XT_DIR}/${SURGE_XT_PLUGINS}"
+                      ${SURGE_XT_PLUGINS_SHA256} plugins_ok)
+        opendaw_fetch("${SURGE_XT_URL}/surge-xt-portable-content-${SURGE_XT_VERSION}.tar.gz"
+                      "${SURGE_XT_DIR}/surge-xt-portable-content-${SURGE_XT_VERSION}.tar.gz"
+                      7ed24822eab69f73101d8558222979b1bceb4882a780292bb7087309b7b101bd content_ok)
+        opendaw_fetch("https://raw.githubusercontent.com/surge-synthesizer/surge/release_xt_${SURGE_XT_VERSION}/LICENSE"
+                      "${SURGE_XT_DIR}/LICENSE"
+                      d4c0fe570b3750d909691ce5f494c9cd11ee047bbbedda9a5d75cc548e4df06b license_ok)
+        if(plugins_ok AND content_ok AND license_ok)
+            message(STATUS "Unpacking Surge XT ${SURGE_XT_VERSION}")
+            file(REMOVE_RECURSE "${SURGE_XT_STAGE}")
+            file(ARCHIVE_EXTRACT INPUT "${SURGE_XT_DIR}/${SURGE_XT_PLUGINS}"
+                 DESTINATION "${SURGE_XT_STAGE}" PATTERNS "${SURGE_XT_VST3_PATTERN}")
+            # The factory content only; the third-party patch and wavetable
+            # packs would add another 340 MB.
+            set(data "./Surge Synth Team/SurgeXTData")
+            file(ARCHIVE_EXTRACT INPUT "${SURGE_XT_DIR}/surge-xt-portable-content-${SURGE_XT_VERSION}.tar.gz"
+                 DESTINATION "${SURGE_XT_DIR}/content"
+                 PATTERNS "${data}/patches_factory" "${data}/wavetables" "${data}/skins"
+                          "${data}/tuning_library" "${data}/fx_presets" "${data}/modulator_presets")
+            file(RENAME "${SURGE_XT_DIR}/content/Surge Synth Team/SurgeXTData" "${SURGE_XT_STAGE}/SurgeXTData")
+            file(REMOVE_RECURSE "${SURGE_XT_DIR}/content")
+            file(COPY_FILE "${SURGE_XT_DIR}/LICENSE" "${SURGE_XT_STAGE}/Surge XT LICENSE.txt")
+            file(TOUCH "${SURGE_XT_STAGE}/.complete")
+        endif()
+    endif()
+
+    if(EXISTS "${SURGE_XT_STAGE}/.complete")
+        # Windows and Linux: the plugin and its data side by side (Surge finds a
+        # SurgeXTData folder beside it). macOS: the plugin in the bundle's
+        # PlugIns and its data in Resources (OpenDaw points Surge at it).
+        if(APPLE)
+            set(surge_plugin_dest "$<TARGET_BUNDLE_CONTENT_DIR:OpenDaw>/PlugIns")
+            set(surge_data_dest "$<TARGET_BUNDLE_CONTENT_DIR:OpenDaw>/Resources")
+        else()
+            set(surge_plugin_dest "$<TARGET_FILE_DIR:OpenDaw>/plugins")
+            set(surge_data_dest "$<TARGET_FILE_DIR:OpenDaw>/plugins")
+        endif()
+        if(CMAKE_VERSION VERSION_GREATER_EQUAL 3.26)
+            set(copy_dir copy_directory_if_different)
+        else()
+            set(copy_dir copy_directory)
+        endif()
+        add_custom_command(TARGET OpenDaw POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E ${copy_dir}
+                    "${SURGE_XT_STAGE}/Surge XT.vst3" "${surge_plugin_dest}/Surge XT.vst3"
+            COMMAND ${CMAKE_COMMAND} -E ${copy_dir}
+                    "${SURGE_XT_STAGE}/SurgeXTData" "${surge_data_dest}/SurgeXTData"
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                    "${SURGE_XT_STAGE}/Surge XT LICENSE.txt" "${surge_data_dest}/Surge XT LICENSE.txt"
+            COMMENT "Copying the Surge XT synth")
+    endif()
+endif()
 target_link_directories(OpenDaw PRIVATE ${FFMPEG_LIBRARY_DIRS})
 
 target_compile_definitions(OpenDaw PRIVATE

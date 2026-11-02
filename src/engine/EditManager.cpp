@@ -1,5 +1,6 @@
 #include "EditManager.h"
 #include "LooperEngine.h"
+#include "instruments/SoundFontInstrument.h"
 #include "utils/FFmpegUtils.h"
 #include "utils/ThemeManager.h"
 #include <juce_audio_formats/juce_audio_formats.h>
@@ -25,11 +26,9 @@ constexpr float kMonoUtilityModeValue = 0.1875f; // Mo Noam: (int)(0.1875*7.999)
 static bool hasInstrumentPlugin(te::AudioTrack* track)
 {
     if (!track) return false;
-    for (auto* p : track->pluginList.getPlugins()) {
-        if (auto* ext = dynamic_cast<te::ExternalPlugin*>(p))
-            if (ext->isSynth())
-                return true;
-    }
+    for (auto* p : track->pluginList.getPlugins())
+        if (p->isSynth())
+            return true;
     return false;
 }
 
@@ -454,8 +453,12 @@ void EditManager::setTimeSignature(int num, int den)
 te::AudioTrack* EditManager::addMidiTrack()
 {
     auto* track = addAudioTrack();
-    if (track)
+    if (track) {
         markAsMidiTrack(track);
+        // New MIDI tracks play straight away, on the built-in piano.
+        if (SoundFontLibrary::instance().isAvailable())
+            setTrackBuiltInInstrument(*track, 0, 0);
+    }
     return track;
 }
 
@@ -667,11 +670,9 @@ void EditManager::setTrackMono(te::AudioTrack& track, bool mono)
 te::Plugin* EditManager::getTrackInstrument(te::AudioTrack* track) const
 {
     if (!track) return nullptr;
-    for (auto* p : track->pluginList.getPlugins()) {
-        if (auto* ext = dynamic_cast<te::ExternalPlugin*>(p))
-            if (ext->isSynth())
-                return ext;
-    }
+    for (auto* p : track->pluginList.getPlugins())
+        if (p->isSynth())
+            return p;
     return nullptr;
 }
 
@@ -691,12 +692,26 @@ void EditManager::setTrackInstrument(te::AudioTrack& track,
 
 void EditManager::removeTrackInstrument(te::AudioTrack& track)
 {
-    for (int i = track.pluginList.size() - 1; i >= 0; --i) {
-        if (auto* ext = dynamic_cast<te::ExternalPlugin*>(track.pluginList[i])) {
-            if (ext->isSynth())
-                ext->deleteFromParent();
-        }
+    for (int i = track.pluginList.size() - 1; i >= 0; --i)
+        if (auto* p = track.pluginList[i]; p && p->isSynth())
+            p->deleteFromParent();
+}
+
+void EditManager::setTrackBuiltInInstrument(te::AudioTrack& track, int bank, int program)
+{
+    if (!edit_) return;
+    edit_->getUndoManager().beginNewTransaction("Change Instrument");
+    // Changing sound on the built-in instrument keeps the plugin (and its place).
+    if (auto* sf = dynamic_cast<SoundFontPlugin*>(getTrackInstrument(&track))) {
+        sf->setPreset(bank, program);
+    } else {
+        removeTrackInstrument(track);
+        if (auto plugin = edit_->getPluginCache().createNewPlugin(SoundFontPlugin::create(bank, program)))
+            track.pluginList.insertPlugin(plugin, 0, nullptr);
     }
+    markAsMidiTrack(&track);
+    markDirtyAndNotify();
+    emit tracksChanged();
 }
 
 void EditManager::markAsMidiTrack(te::AudioTrack* track)

@@ -195,6 +195,7 @@ A live looper in the style of a looper pedal or looping app, built into the DAW.
   - Snap modes: Off, 1/4 Beat, 1/2 Beat, Beat, Bar
   - Zoom in / out
   - Right-click context menu: Select All, Delete Selected, Quantize, Add Note Here
+  - **Drum names on the keys** when the track plays a drum kit (Kick, Snare, Closed Hi-Hat, Crash and so on, from the General MIDI drum map), and the view opens on the kit's core range
 
 <div align="center">
 <img src="resources/screenshots/piano-roll.png" alt="OpenDaw piano roll editing a harp part, with note grid, velocity lane, CC lane and MIDI channel list" width="900">
@@ -258,6 +259,18 @@ Recorded a piano part onto one track? **Split Piano Hands (AI)** separates it in
 <br>
 <em>Audio Clip Editor — destructive waveform editing with cut, fade, normalize, reverse, and more</em>
 </div>
+
+### Built-in Instruments
+
+MIDI tracks make sound out of the box, with no plugins to install, on Windows, macOS and Linux.
+
+- **A full General MIDI sound set** built in: pianos, electric pianos, organs, guitars, basses, strings, choirs, brass, woodwinds, synth leads and pads, world instruments and sound effects (all 128 General MIDI sounds plus about 150 variations), and 12 drum kits (Standard, Room, Power, Electronic, 808/909, Dance, Jazz, Brush, Orchestral and more)
+- New MIDI tracks start on the **Grand Piano**. Click the instrument button on a MIDI track's header or mixer strip to pick another sound from the menu, grouped by family, or a VST instrument
+- **Follow MIDI Program Changes** (in the same menu) turns the instrument into a General MIDI player: program changes in the MIDI choose each channel's sound and channel 10 plays drums, so imported General MIDI files play with their intended instruments on one track
+- The AI assistant picks fitting sounds for the parts it writes (`set_track_instrument`)
+- The sounds come from [GeneralUser GS](https://www.schristiancollins.com/generaluser) by S. Christian Collins, played by [TinySoundFont](https://github.com/schellingb/TinySoundFont)
+
+**Surge XT synth.** OpenDaw ships with [Surge XT](https://surge-synthesizer.github.io/), the free, open-source hybrid synthesizer from the Surge Synth Team, with its 600+ factory patches, wavetables and skins. Choose **Surge XT Synth** in a MIDI track's instrument menu: it goes on the track and its window opens, where you browse presets by clicking the patch name (or the arrows beside it) and shape the sound. It's a regular VST3, so it also appears in the VST instrument list, and its settings are saved with the project. The AI can put it on a track too (`set_track_instrument` with "Surge XT").
 
 ### VST3 Plugin Support
 
@@ -527,6 +540,7 @@ The assistant uses **agentic tool use**: when you send a message, it decides whi
 | Category | Tools |
 |----------|-------|
 | **Track management** | Create audio/MIDI/bus tracks, delete, rename |
+| **Instruments** | List the built-in sounds and installed VST instruments, and choose each MIDI track's sound |
 | **Track properties** | Mute, solo, volume, pan, mono, record arm |
 | **Routing** | Assign inputs, set outputs to master or buses, disconnect |
 | **Effects** | Add/remove built-in effects, set parameters, bypass |
@@ -740,7 +754,7 @@ Each track has controls in two places:
 
 ### Working with MIDI
 
-1. **Add a MIDI track** via Edit > Add MIDI Track (Ctrl+Shift+T).
+1. **Add a MIDI track** via Edit > Add MIDI Track (Ctrl+Shift+T). It plays the built-in Grand Piano; click its instrument button to choose another sound.
 2. **Create a MIDI clip** by right-clicking a MIDI track lane and selecting "Create Empty MIDI Clip", or drag a `.mid` file from the browser.
 3. **Open the Piano Roll** by double-clicking a MIDI clip (or right-click > Edit in Piano Roll).
 4. **Add notes** with Ctrl+click or double-click on the grid. **Drag** notes to move them, **drag edges** to resize.
@@ -758,6 +772,8 @@ Each track has controls in two places:
 6. The info bar at the bottom shows BPM, duration, sample rate, bit depth, and the source file path.
 
 ### Using VST3 instruments
+
+MIDI tracks already play the built-in sounds; VST3 instruments are for when you want something else.
 
 1. **Scan for plugins** via Edit > Scan VST Plugins. This only needs to be done once (results are cached).
 2. **Assign an instrument** to a MIDI track by clicking the instrument button on the track header or mixer channel strip.
@@ -869,6 +885,7 @@ AudioMixer/
   libs/
     JUCE/                                 JUCE framework (git submodule)
     tracktion_engine/                     Tracktion Engine (git submodule)
+    tinysoundfont/                        TinySoundFont, the SoundFont player behind the built-in instruments
   src/
     main.cpp                              Entry point, JUCE-Qt bridge
     app/
@@ -879,6 +896,9 @@ AudioMixer/
       LoudnessMeter.h/cpp                 BS.1770 / EBU R128 loudness meter, the output tap and file analysis
       LooperPlugin.h/cpp                  The looper's audio: input hub, per-pad recording, overdub, playback and print
       LooperEngine.h/cpp                  The looper: pads, timing, layers, saving, and printing the performance
+      instruments/
+        SoundFontInstrument.h/cpp         The built-in General MIDI instrument and its sound library
+        BundledPlugins.h/cpp              Plugins shipped with OpenDaw (Surge XT): finding and registering them
       EditManager.h/cpp                   Manages the current Edit: tracks, clips, routing, export, autosave
       PluginScanner.h/cpp                 VST3 plugin scanning and cache
     ui/
@@ -941,6 +961,7 @@ AudioMixer/
         EffectSelectorDialog.h/cpp        Effect picker dialog
         PluginEditorWindow.h/cpp          Native VST plugin editor window
         VstSelectorDialog.h/cpp           Searchable VST instrument selector
+        InstrumentMenu.h/cpp              The instrument picker: built-in sounds by family, VSTs, none
       routing/
         RoutingView.h/cpp                 Routing graph: nodes, cables, sends, live signal flow
         RoutingMatrixView.h/cpp           Routing matrix: outputs and sends as a grid
@@ -988,6 +1009,10 @@ See **[CONTRIBUTING.md](CONTRIBUTING.md)** for details on how to get started, co
 This project is licensed under the **GNU General Public License v3.0** — see the [LICENSE](LICENSE) file for details.
 
 OpenDaw uses [Tracktion Engine](https://github.com/Tracktion/tracktion_engine) (GPLv3) and [JUCE](https://juce.com/) (AGPLv3), both of which are compatible with this license.
+
+The built-in instruments use [TinySoundFont](https://github.com/schellingb/TinySoundFont) (MIT licence, in `libs/tinysoundfont`) and the [GeneralUser GS](https://www.schristiancollins.com/generaluser) SoundFont by S. Christian Collins, which is free to use and redistribute in software (its licence ships beside it in the `soundfonts` folder). The SoundFont is downloaded when CMake configures the build.
+
+OpenDaw ships the [Surge XT](https://github.com/surge-synthesizer/surge) synthesizer by the Surge Synth Team (GPLv3; the unmodified official 1.3.4 release, whose source is at [release_xt_1.3.4](https://github.com/surge-synthesizer/surge/tree/release_xt_1.3.4)). Its licence ships beside it as `Surge XT LICENSE.txt`. CMake downloads the release and its factory content when it configures the build (pass `-DOPENDAW_BUNDLE_SURGE_XT=OFF` to leave it out).
 
 ---
 

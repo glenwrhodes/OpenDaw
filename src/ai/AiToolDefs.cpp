@@ -91,8 +91,33 @@ QJsonArray AiToolDefs::allTools()
         QJsonObject props;
         props["name"] = prop("string", "Optional name for the new MIDI track.");
         tools.append(makeTool("create_midi_track",
-            "Create a new MIDI track. Optionally set its name.",
+            "Create a new MIDI track. Optionally set its name. It plays the built-in Grand Piano "
+            "until you choose another sound with set_track_instrument.",
             props));
+    }
+
+    tools.append(makeTool("list_instruments",
+        "List the instruments a MIDI track can use: the built-in sounds (a full General MIDI set "
+        "grouped by family, plus drum kits), the bundled Surge XT synth, and any VST instruments "
+        "installed.",
+        {}));
+
+    {
+        QJsonObject props;
+        props["track"] = trackProp();
+        props["instrument"] = prop("string",
+            "A built-in sound name (e.g. 'Grand Piano', 'Finger Bass', 'Slow Strings', 'Warm Pad', "
+            "'Saw Lead'), a drum kit ('Standard 1', 'Room', 'Power', 'Electronic', '808/909', 'Jazz', "
+            "'Brush', 'Orchestral', or just 'drums'), a General MIDI program number 1-128, 'Surge XT' "
+            "(the bundled synth, for when the user wants to design or browse synth sounds "
+            "themselves), or the name of an installed VST instrument.");
+        props["follow_program_changes"] = prop("boolean",
+            "Built-in instrument only: play like a General MIDI module, where program changes in the "
+            "MIDI choose each channel's sound and channel 10 plays drums. For imported GM files.");
+        tools.append(makeTool("set_track_instrument",
+            "Choose the instrument a MIDI track plays. Give every MIDI part a fitting sound: drums on "
+            "a drum kit, bass on a bass, and so on.",
+            props, {"track", "instrument"}));
     }
 
     {

@@ -1,4 +1,5 @@
 #include "PluginScanner.h"
+#include "instruments/BundledPlugins.h"
 #include <juce_audio_processors/juce_audio_processors.h>
 #include <QDebug>
 
@@ -33,6 +34,8 @@ void PluginScanWorker::doScan()
 
     for (auto& fmt : formats) {
         auto paths = fmt.format->getDefaultLocationsToSearch();
+        if (fmt.format == &vst3 && BundledPlugins::folder() != juce::File())
+            paths.add(BundledPlugins::folder());
         auto files = fmt.format->searchPathsForPlugins(paths, true, true);
         for (auto& f : files) {
             allFiles.add(f);
@@ -133,7 +136,7 @@ void PluginScanner::loadCachedList()
     auto& kpl = getPluginList();
     for (int i = kpl.getNumTypes() - 1; i >= 0; --i) {
         auto desc = kpl.getTypes()[i];
-        if (!juce::File(desc.fileOrIdentifier).existsAsFile())
+        if (!juce::File(desc.fileOrIdentifier).exists())
             kpl.removeType(desc);
     }
 }

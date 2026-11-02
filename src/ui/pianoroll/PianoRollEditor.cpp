@@ -1,6 +1,7 @@
 #include "PianoRollEditor.h"
 #include "ChannelColors.h"
 #include "engine/EditManager.h"
+#include "engine/instruments/SoundFontInstrument.h"
 #include "utils/IconFont.h"
 #include "utils/ThemeManager.h"
 #include <QVBoxLayout>
@@ -243,6 +244,7 @@ PianoRollEditor::PianoRollEditor(QWidget* parent)
     auto* rulerSpacer = new QWidget(bodyWidget);
     rulerSpacer->setFixedWidth(keyboard_->sizeHint().width());
     rulerSpacer->setFixedHeight(24);
+    keyColumnPanels_.push_back(rulerSpacer);
     rulerRow->addWidget(rulerSpacer);
 
     ruler_ = new PianoRollRuler(bodyWidget);
@@ -269,6 +271,7 @@ PianoRollEditor::PianoRollEditor(QWidget* parent)
 
     auto* velHeaderPanel = new QWidget(bodyWidget);
     velHeaderPanel->setFixedWidth(keyboard_->sizeHint().width());
+    keyColumnPanels_.push_back(velHeaderPanel);
     velHeaderPanel->setAutoFillBackground(true);
     QPalette velHdrPal;
     velHdrPal.setColor(QPalette::Window, theme.surface);
@@ -315,6 +318,7 @@ PianoRollEditor::PianoRollEditor(QWidget* parent)
     // Left header panel (replaces blank spacer)
     auto* ccHeaderPanel = new QWidget(ccContainer_);
     ccHeaderPanel->setFixedWidth(keyboard_->sizeHint().width());
+    keyColumnPanels_.push_back(ccHeaderPanel);
     ccHeaderPanel->setAutoFillBackground(true);
     QPalette ccHdrPal;
     ccHdrPal.setColor(QPalette::Window, theme.surface);
@@ -458,6 +462,10 @@ PianoRollEditor::PianoRollEditor(QWidget* parent)
 
     // ── Connections ──
 
+    connect(keyboard_, &PianoKeyboard::keyWidthChanged, this, [this](int width) {
+        for (auto* w : keyColumnPanels_) w->setFixedWidth(width);
+    });
+
     connect(keyboard_, &PianoKeyboard::noteClicked, this, [this](int note) {
         noteGrid_->playNotePreview(note);
     });
@@ -566,6 +574,9 @@ PianoRollEditor::PianoRollEditor(QWidget* parent)
 void PianoRollEditor::setClip(te::MidiClip* clip, EditManager* editMgr)
 {
     clip_ = clip;
+    if (editMgr && editMgr != editMgr_)
+        connect(editMgr, &EditManager::tracksChanged, this, &PianoRollEditor::updateDrumNames,
+                Qt::UniqueConnection);
     editMgr_ = editMgr;
     track_ = nullptr;
     linkedClips_.clear();
@@ -586,6 +597,29 @@ void PianoRollEditor::setClip(te::MidiClip* clip, EditManager* editMgr)
 
     passClipsToChildren();
     rebuildChannelPanel();
+    updateDrumNames();
+}
+
+void PianoRollEditor::updateDrumNames()
+{
+    // Drum names when the track plays a drum kit: a built-in kit, channel 10
+    // of the built-in instrument in General MIDI mode, or a drum VST.
+    bool drums = false;
+    auto* track = clip_ && editMgr_ && editMgr_->isClipValid(clip_) ? clip_->getAudioTrack() : nullptr;
+    if (track) {
+        if (auto* inst = editMgr_->getTrackInstrument(track)) {
+            if (auto* sf = dynamic_cast<SoundFontPlugin*>(inst))
+                drums = sf->bank() == 128 || (sf->followsProgramChanges() && activeChannel_ == 10);
+            else
+                drums = inst->getName().containsIgnoreCase("drum");
+        }
+    }
+    if (drums != keyboard_->drumNames()) {
+        keyboard_->setDrumNames(drums);
+        // The kit's core (kick 35 up through the toms and hats) from the bottom.
+        const int rows = int(noteGrid_->viewport()->height() / noteGrid_->noteRowHeight());
+        noteGrid_->scrollToMidiNote(drums ? std::clamp(35 + rows / 2 - 1, 35, 44) : 60);
+    }
 }
 
 void PianoRollEditor::gatherLinkedClips()
@@ -642,6 +676,7 @@ void PianoRollEditor::setActiveChannel(int channelNumber)
     }
 
     rebuildChannelPanel();
+    updateDrumNames();
 }
 
 te::MidiClip* PianoRollEditor::ensureClipForActiveChannel()
@@ -694,6 +729,7 @@ void PianoRollEditor::refresh()
 {
     dropStaleClips();
     if (!clip_) return;
+    updateDrumNames();
     noteGrid_->rebuildNotes();
     velocityLane_->setPixelsPerBeat(noteGrid_->pixelsPerBeat());
     velocityLane_->refresh();

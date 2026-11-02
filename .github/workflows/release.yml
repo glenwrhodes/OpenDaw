@@ -220,6 +220,11 @@ jobs:
             | xargs -0 -n 1 "${SIGN[@]}"
           find "$APP/Contents/Frameworks" -maxdepth 1 -type d -name "*.framework" -print0 \
             | xargs -0 -n 1 "${SIGN[@]}"
+          # Bundled plugins (Surge XT), signed again with our identity.
+          if [ -d "$APP/Contents/PlugIns" ]; then
+            find "$APP/Contents/PlugIns" -maxdepth 1 -type d -name "*.vst3" -print0 \
+              | xargs -0 -n 1 "${SIGN[@]}"
+          fi
           "${SIGN[@]}" --entitlements packaging/macos/OpenDaw.entitlements "$APP"
           codesign --verify --deep --strict --verbose=2 "$APP"
           codesign --display --entitlements - "$APP"
@@ -368,8 +373,12 @@ jobs:
           wget -q "https://github.com/linuxdeploy/linuxdeploy-plugin-qt/releases/download/continuous/linuxdeploy-plugin-qt-x86_64.AppImage"
           chmod +x linuxdeploy-x86_64.AppImage linuxdeploy-plugin-qt-x86_64.AppImage
 
-          mkdir -p AppDir/usr/bin
+          mkdir -p AppDir/usr/bin AppDir/usr/share/opendaw
           cp build/OpenDaw_artefacts/Release/OpenDaw AppDir/usr/bin/
+          cp -r build/OpenDaw_artefacts/Release/soundfonts AppDir/usr/share/opendaw/
+          if [ -d build/OpenDaw_artefacts/Release/plugins ]; then
+            cp -r build/OpenDaw_artefacts/Release/plugins AppDir/usr/share/opendaw/
+          fi
 
           cat > OpenDaw.desktop << 'EOF'
           [Desktop Entry]

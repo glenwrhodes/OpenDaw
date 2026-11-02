@@ -14,7 +14,40 @@ PianoKeyboard::PianoKeyboard(QWidget* parent)
 
 QSize PianoKeyboard::sizeHint() const
 {
-    return QSize(KEY_WIDTH, static_cast<int>(TOTAL_NOTES * noteRowHeight_));
+    return QSize(keyWidth(), static_cast<int>(TOTAL_NOTES * noteRowHeight_));
+}
+
+void PianoKeyboard::setDrumNames(bool on)
+{
+    if (on == drumNames_) return;
+    drumNames_ = on;
+    setFixedWidth(keyWidth());
+    update();
+    emit keyWidthChanged(keyWidth());
+}
+
+QString PianoKeyboard::drumName(int note)
+{
+    // General MIDI percussion (35-81) plus the GS extras most kits include.
+    static const char* names[] = {
+        "High Q", "Slap", "Scratch Push", "Scratch Pull", "Sticks",           // 27
+        "Square Click", "Metronome Click", "Metronome Bell",                   // 32
+        "Kick 2", "Kick", "Side Stick", "Snare", "Hand Clap", "Snare 2",       // 35
+        "Low Floor Tom", "Closed Hi-Hat", "High Floor Tom", "Pedal Hi-Hat",    // 41
+        "Low Tom", "Open Hi-Hat", "Low-Mid Tom", "Hi-Mid Tom", "Crash 1",      // 45
+        "High Tom", "Ride 1", "China", "Ride Bell", "Tambourine", "Splash",    // 50
+        "Cowbell", "Crash 2", "Vibraslap", "Ride 2", "Hi Bongo", "Low Bongo",  // 56
+        "Mute Hi Conga", "Open Hi Conga", "Low Conga", "High Timbale",         // 62
+        "Low Timbale", "High Agogo", "Low Agogo", "Cabasa", "Maracas",         // 66
+        "Short Whistle", "Long Whistle", "Short Guiro", "Long Guiro", "Claves",// 71
+        "Hi Wood Block", "Low Wood Block", "Mute Cuica", "Open Cuica",         // 76
+        "Mute Triangle", "Open Triangle", "Shaker", "Jingle Bell", "Bell Tree",// 80
+        "Castanets", "Mute Surdo", "Open Surdo"                                // 85
+    };
+    constexpr int first = 27;
+    constexpr int count = int(sizeof(names) / sizeof(names[0]));
+    if (note < first || note >= first + count) return {};
+    return names[note - first];
 }
 
 bool PianoKeyboard::isBlackKey(int note)
@@ -51,9 +84,33 @@ void PianoKeyboard::paintEvent(QPaintEvent*)
 
         if (y + noteRowHeight_ < 0 || y > h) continue;
 
-        QRectF r(0, y, KEY_WIDTH, noteRowHeight_);
+        QRectF r(0, y, keyWidth(), noteRowHeight_);
 
         bool black = isBlackKey(note);
+
+        if (drumNames_) {
+            // A list of drum sounds: light rows (black-key notes a shade darker),
+            // the sound's name, and the note name on each C for reference.
+            const QString name = drumName(note);
+            QColor rowColor = black ? theme.pianoKeyWhite.darker(112) : theme.pianoKeyWhite;
+            painter.fillRect(r, rowColor);
+            painter.setPen(QPen(QColor(175, 175, 175), 1.0));
+            painter.drawLine(QPointF(r.left(), r.bottom() - 1), QPointF(r.right() - 1, r.bottom() - 1));
+
+            QFont f = painter.font();
+            f.setPixelSize(std::max(8, static_cast<int>(noteRowHeight_ - 4)));
+            f.setBold(false);
+            painter.setFont(f);
+            if (!name.isEmpty()) {
+                painter.setPen(QColor(30, 30, 30));
+                painter.drawText(r.adjusted(4, 0, -26, 0), Qt::AlignVCenter | Qt::AlignLeft, name);
+            }
+            if (note % 12 == 0 || name.isEmpty()) {
+                painter.setPen(QColor(120, 120, 120));
+                painter.drawText(r.adjusted(0, 0, -4, 0), Qt::AlignVCenter | Qt::AlignRight, noteName(note));
+            }
+            continue;
+        }
 
         QColor baseColor = black ? theme.pianoKeyBlack : theme.pianoKeyWhite;
         QColor highlight = black ? QColor(70, 70, 70) : QColor(255, 255, 255);
@@ -82,7 +139,7 @@ void PianoKeyboard::paintEvent(QPaintEvent*)
     }
 
     painter.setPen(QPen(theme.pianoKeyBorder, 1.0));
-    painter.drawLine(KEY_WIDTH - 1, 0, KEY_WIDTH - 1, h);
+    painter.drawLine(keyWidth() - 1, 0, keyWidth() - 1, h);
 }
 
 void PianoKeyboard::mousePressEvent(QMouseEvent* event)

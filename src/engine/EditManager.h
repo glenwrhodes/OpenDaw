@@ -90,6 +90,9 @@ public:
     void setTrackInstrument(te::AudioTrack& track,
                             const juce::PluginDescription& desc);
     void removeTrackInstrument(te::AudioTrack& track);
+    // A sound from the built-in General MIDI set (bank 128 is drum kits).
+    // Replaces any other instrument; one undo step.
+    void setTrackBuiltInInstrument(te::AudioTrack& track, int bank, int program);
 
     void markAsMidiTrack(te::AudioTrack* track);
 

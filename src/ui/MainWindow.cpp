@@ -1,5 +1,7 @@
 #include "MainWindow.h"
 #include "ui/effects/VstSelectorDialog.h"
+#include "ui/effects/InstrumentMenu.h"
+#include "engine/instruments/BundledPlugins.h"
 #include "ui/effects/PluginEditorWindow.h"
 #include "ui/pianoroll/PianoRollEditor.h"
 #include "ui/audioclip/AudioClipEditor.h"
@@ -28,6 +30,7 @@
 #include <QShortcutEvent>
 #include <QTabBar>
 #include <QActionGroup>
+#include <QCursor>
 #include <QPainter>
 #include <QFontMetrics>
 #include <QTimer>
@@ -1767,11 +1770,32 @@ void MainWindow::onInstrumentSelectRequested(te::AudioTrack* track)
 {
     if (!track) return;
 
-    auto& pluginList = app_.pluginScanner().getPluginList();
-    VstSelectorDialog dlg(pluginList, true, this);
-    if (dlg.exec() == QDialog::Accepted && dlg.hasSelection()) {
-        editMgr_.setTrackInstrument(*track, dlg.selectedPlugin());
-    }
+    auto chooseVst = [this, track]() {
+        auto& pluginList = app_.pluginScanner().getPluginList();
+        VstSelectorDialog dlg(pluginList, true, this);
+        if (dlg.exec() == QDialog::Accepted && dlg.hasSelection())
+            editMgr_.setTrackInstrument(*track, dlg.selectedPlugin());
+    };
+    std::function<void()> chooseSurge;
+    if (BundledPlugins::hasSurgeXt())
+        chooseSurge = [this, track]() {
+            QApplication::setOverrideCursor(Qt::WaitCursor);
+            auto& scanner = app_.pluginScanner();
+            const auto desc = BundledPlugins::surgeXtDescription(scanner.getPluginList());
+            if (desc) {
+                scanner.saveCachedList();
+                editMgr_.setTrackInstrument(*track, *desc);
+            }
+            QApplication::restoreOverrideCursor();
+            if (!desc) {
+                QMessageBox::warning(this, "Surge XT", "Surge XT couldn't be loaded.");
+                return;
+            }
+            // Open its window: the presets are picked there.
+            if (auto* ext = dynamic_cast<te::ExternalPlugin*>(editMgr_.getTrackInstrument(track)))
+                PluginEditorWindow::showForPlugin(*ext);
+        };
+    showInstrumentMenu(editMgr_, track, chooseVst, chooseSurge, QCursor::pos());
 }
 
 void MainWindow::onMidiClipDoubleClicked(te::MidiClip* clip)

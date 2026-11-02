@@ -1,5 +1,6 @@
 #include "OpenDawApplication.h"
 #include "ui/MainWindow.h"
+#include "engine/instruments/BundledPlugins.h"
 #include "ui/dialogs/RecoveryDialog.h"
 #include "utils/ThemeManager.h"
 #include <QDebug>
@@ -16,6 +17,8 @@ OpenDawApplication::~OpenDawApplication() = default;
 
 bool OpenDawApplication::initialize()
 {
+    BundledPlugins::prepareEnvironment();
+
     qDebug() << "[init] creating JuceQtBridge";
     bridge_ = std::make_unique<JuceQtBridge>(this);
     bridge_->start();

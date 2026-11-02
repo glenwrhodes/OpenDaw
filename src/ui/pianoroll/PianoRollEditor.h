@@ -63,6 +63,7 @@ private:
     void setActiveChannel(int channelNumber);
     te::MidiClip* ensureClipForActiveChannel();
     void passClipsToChildren();
+    void updateDrumNames();
 
     te::MidiClip* clip_ = nullptr;
     EditManager* editMgr_ = nullptr;
@@ -80,6 +81,7 @@ private:
     QComboBox* ccCombo_ = nullptr;
     PianoRollRuler* ruler_;
     PianoKeyboard* keyboard_;
+    std::vector<QWidget*> keyColumnPanels_;   // match the keyboard's width
     NoteGrid* noteGrid_;
     VelocityLane* velocityLane_;
     CcLane* ccLane_ = nullptr;
